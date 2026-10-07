@@ -1,0 +1,39 @@
+# Tasks
+
+## 1. Publication events and reference policy
+
+- [x] 1.1 Create `.github/workflows/publish-image.yaml` with main/tag push triggers, deleted-reference exclusion, pinned checkout/setup actions, exact checked-out commit resolution, lower-case repository naming, and collision-safe Docker tag validation. Exercise main, ordinary branch, lightweight/annotated tag, deleted ref, slash/overlength tag, reserved main/sha- tag, and case-sensitive valid tag inputs; verify accepted references and explicit rejection without registry writes.
+- [x] 1.2 Add serialized queued publication and an authenticated current-ref eligibility check, including annotated-tag peeling. Exercise superseded/deleted refs and lookup failures; verify an older main candidate cannot overwrite a newer delivered channel and distinct release tags are not canceled merely because another ref is publishing.
+- [x] 1.3 Document triggers, main/release/full-commit references, invalid/reserved tag behavior, queued/superseded runs, and publication-only scope in `README.md`; verify the documented examples agree with the exercised event/reference policy.
+
+## 2. Existing verification gates and runnable image
+
+- [x] 2.1 Configure Node 24, lockfile installation, an isolated PostgreSQL 18 service, and the existing typecheck/behavior commands as required CI gates with synthetic `TEST_DATABASE_URL`. Run the same commands against an isolated database and verify a failing gate prevents all publishing steps without production secrets.
+- [x] 2.2 Build the existing Dockerfile for linux/amd64 with source/revision labels, then smoke that candidate's actual entrypoint using synthetic settings and temporary UID-1000-writable media. Verify API health, built frontend serving, migrations, non-root execution, and exclusion of canary environment/data secrets from image files/layers; ensure publishing later reuses this candidate without rebuilding.
+- [x] 2.3 Document the required gates and reproducible isolated smoke configuration beside the CI guidance in `README.md`; exercise the documented verification commands and confirm they need neither a real Telegram token nor the Unraid environment.
+
+## 3. Authenticated artifact publication
+
+- [x] 3.1 Publish the verified candidate with repository-scoped contents-read/packages-write permissions and `GITHUB_TOKEN`, pushing the full-commit reference before the eligible event reference and recording source/digest evidence. Exercise push/pull of the same tested image through an isolated registry plus failed credentials/transfers; verify tags select that image, no main or unrelated alias is advanced by a release event, and failures are reported without a rebuild or deployment fallback.
+- [x] 3.2 Document GHCR repository/package linking, unchanged/default-private visibility, workflow permission errors, public pulls, and authorized classic read-packages credentials for private Unraid pulls. Verify the documented authentication commands use password-stdin and do not place registry or shop secrets in committed files or workflow build arguments.
+
+## 4. Manual production image consumption
+
+- [x] 4.1 Replace the app's production image/build block with required `APP_IMAGE` selection and remove local source building. Run production Compose configuration checks for tag/digest selections and missing configuration; verify port 4893, `.env`, PostgreSQL 18, health/dependency settings, and all persistent mounts remain unchanged.
+- [x] 4.2 Add the current repository's main image example to `.env.production.example` and update `README.md` with guarded pull-then-recreate commands, app-only updates, digest selection, compatible rollback, and the production migration guide's image-start command. Exercise the documented manual update commands on an isolated stack and verify a failed pull stops the update; do not edit real `.env` values.
+- [x] 4.3 Exercise image-only Compose with a pulled candidate, missing/inaccessible image selection, and an earlier compatible digest. Verify actual HTTP startup and protected image retrieval, then recreate only the app and confirm database records, media bytes, and storage locations are preserved without touching the running Unraid shop.
+
+## 5. Cross-system publication proof
+
+- [x] 5.1 Validate the completed workflow against current GitHub Actions syntax and run the combined event/gate/build/push/pull path in an isolated environment. Verify rejected refs and failed gates produce no registry writes, source labels/full-commit references identify the smoke-tested artifact, and the production consumer runs it without a local build.
+- [ ] 5.2 With authorized GitHub access and operator-controlled pushes, observe a real main run and a real Git tag run publishing to GHCR, then pull and run the delivered artifact from an isolated consumer. Record run results, delivery/commit digests, unchanged main on tag publication, and absence of Unraid deployment actions. If repository push/package access is unavailable, report the exact prerequisite and leave this task incomplete; local fixtures are not proof of live Actions/GHCR publication.
+
+## Verification evidence (2026-10-08)
+
+- Node 24.21.0: `npm ci`, `npm run typecheck`, and `npm test` passed against a new isolated PostgreSQL 18 database; 27 behavior tests passed. An unavailable synthetic test database failed the gate, skipped subsequent build/login/push commands, and left the isolated registry empty.
+- Built and smoked the existing Dockerfile for linux/amd64. Candidate and isolated registry digest: `sha256:25d0a9e5bcad6219f4a6a7669b443acd23651dafa1b12ea4769e9926cff360f0`; revision label: `07ba997a716384f3a837b50362ad631013317c93`; source label: `https://github.com/nikhcevov/order-manager-for-wife`. These identify the locally verified working-checkout artifact, not a live GHCR publication.
+- Actual entrypoint proof: API health, built HTML/JavaScript assets, startup migrations, UID 1000 media writes, and exclusion of the synthetic canary from image configuration and saved layers passed.
+- Authenticated isolated registry push/pull returned the same smoke-tested image without rebuilding. Exact `V1.2.3` publication preserved a distinct main digest. Invalid refs, failed credentials, and unavailable transfers left delivery tags unchanged; current-ref fixtures covered annotated tags, superseded/deleted refs, and authorization failure.
+- An isolated copy of production Compose pulled and ran that artifact without source building. Missing image selection, nonexistent images, and unauthorized pulls failed safely. App-only rollback to the earlier compatible digest `sha256:7e92e428618a0c6722d5d9a9134217a36a3ba3bbcaab36c89c72625b8920a5bf` and forward recreation preserved order/product/media records, protected media bytes, storage mount sources, and the database container. Anonymous media retrieval returned 401; a signed synthetic Telegram session retrieved the same bytes.
+- `openspec validate add-ghcr-publishing --strict` passed. actionlint 1.7.12 does not recognize `concurrency.queue`; it passed the remaining workflow on a temporary stdin copy without that property. The unchanged `queue: max` / `cancel-in-progress: false` policy was checked separately against [GitHub's current concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+- Task 5.2 remains incomplete: `gh` is unavailable, neither GitHub token environment variables nor the Git credential helper supplied authentication, and the public repository's `publish-image.yaml` workflow-runs API returned 404. Required next: authorized repository Actions/push and package access plus operator-controlled main and Git-tag pushes, followed by live run/digest evidence and an isolated GHCR pull/start. No remote pushes, package visibility changes, Unraid operations, or edits to the real `.env` were performed.

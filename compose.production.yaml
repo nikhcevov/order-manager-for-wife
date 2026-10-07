@@ -1,0 +1,46 @@
+name: order-manager-production
+
+services:
+  app:
+    image: ${APP_IMAGE:?Set APP_IMAGE to the published application image}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:4893:4893"
+    volumes:
+      - type: bind
+        source: ${APP_DATA_DIR:?Set APP_DATA_DIR to an absolute persistent Unraid appdata directory}/media
+        target: /app/var/media
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + process.env.PORT + '/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - type: bind
+        source: ${APP_DATA_DIR:?Set APP_DATA_DIR to an absolute persistent Unraid appdata directory}/postgres18
+        target: /var/lib/postgresql
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+

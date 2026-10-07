@@ -1,0 +1,106 @@
+name: Publish application image
+
+on:
+  push:
+    branches: [main]
+    tags: ['**']
+
+permissions:
+  contents: read
+  packages: write
+
+# One repository-wide publication queue, not one queue per branch/tag.
+concurrency:
+  group: publish-application-image-${{ github.repository }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event.deleted != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: publishing_test
+          POSTGRES_PASSWORD: isolated_ci_password
+          POSTGRES_DB: publishing_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U publishing_test -d publishing_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgres://publishing_test:isolated_ci_password@127.0.0.1:5432/publishing_test
+    steps:
+      - name: Check out the pushed source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Select Node 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Resolve exact source and delivery reference
+        id: resolve
+        run: node scripts/publish-image.mjs resolve
+      - name: Install locked dependencies
+        if: steps.resolve.outputs.eligible == 'true'
+        run: npm ci
+      - name: Typecheck existing workspaces
+        if: steps.resolve.outputs.eligible == 'true'
+        run: npm run typecheck
+      - name: Run PostgreSQL-backed behavior suite
+        if: steps.resolve.outputs.eligible == 'true'
+        run: npm test
+      - name: Build the single production candidate
+        if: steps.resolve.outputs.eligible == 'true'
+        env:
+          CANDIDATE_IMAGE: ${{ steps.resolve.outputs.candidate }}
+          SOURCE_COMMIT: ${{ steps.resolve.outputs.commit }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          mkdir -p var
+          printf '%s\n' 'isolated-publishing-canary-not-a-shop-secret' > .env.publishing-canary
+          printf '%s\n' 'isolated-publishing-canary-not-a-shop-secret' > var/publishing-canary
+          docker build --platform linux/amd64 \
+            --label "org.opencontainers.image.source=https://github.com/$SOURCE_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
+            --tag "$CANDIDATE_IMAGE" .
+      - name: Smoke the exact candidate entrypoint and image layers
+        if: steps.resolve.outputs.eligible == 'true'
+        env:
+          SMOKE_IMAGE: ${{ steps.resolve.outputs.candidate }}
+        run: node scripts/smoke-image.mjs
+      - name: Recheck authenticated current-ref eligibility
+        if: steps.resolve.outputs.eligible == 'true'
+        id: current
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ steps.resolve.outputs.commit }}
+        run: node scripts/publish-image.mjs eligible
+      - name: Authenticate GHCR after all verification
+        if: steps.current.outputs.eligible == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
+      - name: Push tested commit reference then delivery reference
+        if: steps.current.outputs.eligible == 'true'
+        env:
+          IMAGE: ${{ steps.resolve.outputs.image }}
+          SOURCE_COMMIT: ${{ steps.resolve.outputs.commit }}
+          DELIVERY_TAG: ${{ steps.resolve.outputs.tag }}
+          CANDIDATE_IMAGE: ${{ steps.resolve.outputs.candidate }}
+        run: node scripts/publish-image.mjs push
+      - name: Remove synthetic build canaries and registry session
+        if: always()
+        run: |
+          rm -f .env.publishing-canary var/publishing-canary
+          docker logout ghcr.io
