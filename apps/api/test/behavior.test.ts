@@ -57,6 +57,7 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
       const image = order.evidence[0]!.media_id;
       const group = await h.getGroup(order.group_id);
       await h.denied('GET', `/api/orders/${order.id}`, h.bob, undefined, [403, 404]);
+      await h.denied('GET', '/api/orders/ORD-1', h.alice, undefined, [400]);
       await h.denied('POST', `/api/orders/${order.id}/changes`, h.bob, { version: order.version, items: [], expectedTotal: 0 }, [403, 404]);
       await h.denied('PATCH', `/api/groups/${group.id}`, h.bob, { version: group.version, method: 'delivery', deliveryCode: 'private-code' }, [403, 404]);
       await h.denied('GET', `/api/media/${image}`, h.bob, undefined, [403, 404]);
@@ -575,7 +576,10 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
       await h.denied('POST', '/api/orders', h.alice, { items: [{ productId: product.id, quantity: 1 }], expectedTotal: 100, key: 'mixed-method', method: 'in_person', groupId: group.id });
       const second = await h.checkout([{ productId: product.id, quantity: 1 }], { groupId: group.id });
       assert.equal(second.group_id, first.group_id);
+      assert.match(first.reference, /^ORD-\d+$/);
+      assert.match(second.reference, /^ORD-\d+$/);
       assert.notEqual(second.reference, first.reference);
+      assert.ok(Number(second.reference.slice(4)) > Number(first.reference.slice(4)), 'later order must carry the greater reference');
       group = await h.getGroup(group.id);
       assert.equal(group.orders.length, 2);
       group = await h.api<Group>('PATCH', `/api/groups/${group.id}`, h.alice, { version: group.version, method: 'delivery', deliveryCode: 'External-request-123' });

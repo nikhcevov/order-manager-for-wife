@@ -278,11 +278,11 @@ export async function registerOrders(app:FastifyInstance, pool:Pool, config:Conf
       await checkStock(client,products,proposed.lines,[],null,false,now);
       const id = randomUUID();
       const revisionId = randomUUID();
-      const reference = `ORD-${id.replaceAll('-','').toUpperCase()}`;
+      // The reference is assigned by the orders.reference column default from order_number_seq.
       // The current revision FK is deferred, so both immutable records commit together.
-      await client.query(`INSERT INTO orders(id,reference,user_id,group_id,deadline,current_revision,currency)
-        VALUES($1,$2,$3,$4,$5::timestamptz+($8::integer*interval '1 minute'),$6,$7)`,
-        [id,reference,req.user.id,groupId,now,revisionId,config.currency,config.holdMinutes]);
+      await client.query(`INSERT INTO orders(id,user_id,group_id,deadline,current_revision,currency)
+        VALUES($1,$2,$3,$4::timestamptz+($7::integer*interval '1 minute'),$5,$6)`,
+        [id,req.user.id,groupId,now,revisionId,config.currency,config.holdMinutes]);
       await client.query('INSERT INTO order_revisions(id,order_id,number,total,author_id) VALUES($1,$2,1,$3,$4)',
         [revisionId,id,proposed.total,req.user.id]);
       await client.query(`INSERT INTO order_lines(revision_id,position,product_id,name,unit_price,quantity)
