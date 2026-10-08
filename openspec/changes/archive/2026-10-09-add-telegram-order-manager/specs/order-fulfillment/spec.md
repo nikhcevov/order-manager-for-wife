@@ -62,7 +62,7 @@ The system SHALL prevent customers from adding orders, changing method or code, 
 
 #### Scenario: Pending replacement during packing preparation
 - **WHEN** an included order has an unresolved replacement request
-- **THEN** packing cannot begin until the request is approved or rejected
+- **THEN** packing cannot begin until the request is approved, rejected, or withdrawn
 
 ### Requirement: Explicit fulfillment completion
 The system SHALL let the seller complete a paid packing group as sent for delivery or handed over for in-person fulfillment. A missing delivery code SHALL show a warning but SHALL NOT prohibit seller completion. Completed groups SHALL reject new orders and content changes and remain visible in customer history.

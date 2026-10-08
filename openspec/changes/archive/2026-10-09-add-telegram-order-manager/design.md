@@ -2,7 +2,7 @@
 
 ## Context
 
-See `proposal.md` for motivation and `specs/*/spec.md` for behavioral contracts. Read-only inspection found a license, OpenSpec configuration, and assistant tooling, but no application source, package manifest, tests, or deployment setup. All runtime components below are proposed additions, not descriptions of existing behavior.
+See `proposal.md` for motivation and `specs/*/spec.md` for behavioral contracts. At change creation, read-only inspection found a license, OpenSpec configuration, and assistant tooling, but no application source, package manifest, tests, or deployment setup. The decisions below describe the architecture selected for that greenfield change; `tasks.md` tracks implementation and verification progress.
 
 The shop has one seller-operated catalog. Telegram supplies identity and the app container; payments and shipment requests happen externally. The customer explicitly chose review holds that do not expire automatically and one fulfillment method for each combined group.
 
@@ -167,7 +167,7 @@ During implementation, exercise actual browser screens with two customers and a 
 
 ## Migration Plan
 
-There is no existing application data to migrate. During implementation:
+The initial greenfield rollout had no existing application data to migrate. The following steps describe that initial rollout. Existing deployments must preserve database and media state and use compatible migrations and backed-up rollback procedures.
 
 1. Create versioned initial PostgreSQL migrations, local development services, and persistent media storage.
 2. Supply bot token, seller Telegram IDs, shop currency, manual payment instructions, public HTTPS URL, database connection, and storage path through validated runtime configuration. Hold duration has the proposed 30-minute default.
@@ -177,4 +177,4 @@ There is no existing application data to migrate. During implementation:
 
 ## Open Questions
 
-Deployment values remain to be supplied: bot credentials, seller IDs, currency, payment instructions, and HTTPS host. These are operational inputs, not missing product or architecture decisions. The seller can review the proposed hold duration and upload limits without changing the chosen model.
+The user reports the shop live at https://matchagirlie.han-diatonic.uk. Configure `PUBLIC_ORIGIN` and the bot's Mini App/menu-button URL to that same HTTPS origin. Bot credentials, seller IDs, currency, and payment instructions remain deployment configuration, not values to commit here. A live HTTPS deployment alone does not establish real Telegram identity, authorization, device presentation, upload, or restart-persistence verification. The user reports task 8.4 passed on iPhone 14 Pro Max, iOS 27.0.1, Swiftgram 12.9.3; the real-client and restart-persistence results are recorded in `tasks.md`. The seller can review the proposed hold duration and upload limits without changing the chosen model.
