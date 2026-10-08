@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { ApiError, date, money, statusLabels, type Line, type Order, type Session } from './api';
-import { useNativePrimary } from './telegram';
 
 export interface Workspace {
   session: Session; busy: boolean;
@@ -10,7 +9,6 @@ export interface Workspace {
   openGroup: (id: string) => void;
 }
 export function Primary({ children, onClick, disabled = false, busy = false }: { children: string; onClick: () => void; disabled?: boolean; busy?: boolean }) {
-  useNativePrimary(children, onClick, disabled, busy);
   return <button className="primary wide" disabled={disabled || busy} onClick={onClick}>{busy ? 'Working…' : children}</button>;
 }
 export function Empty({ title, children }: { title: string; children: ReactNode }) {

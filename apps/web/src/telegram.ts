@@ -1,8 +1,7 @@
 import { useEffect } from 'react';
 
-interface NativeButton {
-  setText(text: string): void; show(): void; hide(): void; enable(): void; disable(): void;
-  showProgress(leaveActive?: boolean): void; hideProgress(): void;
+interface NativeBackButton {
+  show(): void; hide(): void;
   onClick(callback: () => void): void; offClick(callback: () => void): void;
 }
 interface TelegramWebApp {
@@ -12,8 +11,7 @@ interface TelegramWebApp {
   contentSafeAreaInset?: { top: number; bottom: number; left: number; right: number };
   ready(): void; expand(): void;
   onEvent(name: string, handler: () => void): void; offEvent(name: string, handler: () => void): void;
-  BackButton: Pick<NativeButton, 'show' | 'hide' | 'onClick' | 'offClick'>;
-  MainButton: NativeButton;
+  BackButton: NativeBackButton;
 }
 declare global { interface Window { Telegram?: { WebApp?: TelegramWebApp } } }
 export const telegram = window.Telegram?.WebApp;
@@ -43,13 +41,4 @@ export function useTelegram(back: (() => void) | null) {
     return () => { telegram?.BackButton?.offClick(back); telegram?.BackButton?.hide(); };
   }, [back]);
 }
-export function useNativePrimary(label: string, action: () => void, disabled: boolean, busy: boolean) {
-  useEffect(() => {
-    const button = telegram?.MainButton;
-    if (!button) return;
-    button.setText(label); button.show(); button.onClick(action);
-    disabled || busy ? button.disable() : button.enable();
-    busy ? button.showProgress() : button.hideProgress();
-    return () => { button.offClick(action); button.hideProgress(); button.hide(); };
-  }, [label, action, disabled, busy]);
-}
+
