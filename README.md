@@ -109,22 +109,39 @@ The root `shell-quote` override patches a transitive development-launcher depend
 
 ### Verified GHCR publication
 
-`.github/workflows/publish-image.yaml` publishes on pushes to `main` and Git tag creation or updates, not other branches or deleted refs. It publishes for `linux/amd64` under the lower-case executing repository namespace; for this repository:
+`.github/workflows/publish-image.yaml` publishes on pushes to `main` and stable Git release tags matching the root package version, or a manual Actions **Run workflow** for those same eligible refs, not other branches or deleted refs. It follows the stable release policy of [obsidian-livesync-publisher](https://github.com/nikhcevov/obsidian-livesync-publisher) and publishes for `linux/amd64` under the lower-case executing repository namespace; for this repository:
 
 | Selection | Reference |
 |---|---|
-| Main channel | `ghcr.io/nikhcevov/order-manager-for-wife:main` |
-| Exact Git tag (example) | `ghcr.io/nikhcevov/order-manager-for-wife:v1.2.3` |
+| Latest verified main channel | `ghcr.io/nikhcevov/order-manager-for-wife:latest` or `:main` |
+| Stable release (initial release) | `ghcr.io/nikhcevov/order-manager-for-wife:0.2.0` |
+| Minor / major release channel | `ghcr.io/nikhcevov/order-manager-for-wife:0.2` or `:0` |
 | Full source commit | `ghcr.io/nikhcevov/order-manager-for-wife:sha-` followed by all 40 commit hexadecimal characters |
 | Exact registry artifact | `ghcr.io/nikhcevov/order-manager-for-wife@sha256:` followed by the recorded 64-character digest |
 
-Git tags are preserved case-sensitively and must match `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`. Tags containing slashes, tags longer than 128 characters, the reserved `main` tag, and names beginning with `sha-` fail before any registry writes; they are not sanitized. There is no implicit `latest` or semantic-version alias expansion. A release tag updates only its exact tag and full-commit reference, never `main`. Commit tags provide source traceability but can be rebuilt; use a digest to pin exact image bytes. OCI source/revision labels identify the repository and checked-out commit, including the peeled commit of an annotated Git tag.
+Root `package.json` is the single authoritative application version, initially `0.2.0`; workspace versions remain private/internal. Only stable `MAJOR.MINOR.PATCH` versions are supported, without prerelease or build metadata. Ordinary verified main pushes publish `main`, `latest`, and the full-commit reference without incrementing the version. A main push whose root version differs from its first parent (including the initial addition of the version) also publishes unprefixed `X.Y.Z`, `X.Y`, and `X` image aliases. A manual Git tag push must be exactly `vX.Y.Z` matching that commit's root package version; it publishes those version aliases and the full-commit reference, never `latest` or `main`. Unsupported or mismatched tags fail before registry writes. Commit tags provide source traceability but can be rebuilt; use a digest to pin exact image bytes. OCI source/version/revision labels identify the repository, root version, and checked-out commit, including the peeled commit of an annotated Git tag.
 
 One fixed repository-specific concurrency group uses `queue: max` and `cancel-in-progress: false` to serialize delivery while retaining distinct pending releases. Immediately before publishing, an authenticated current-ref check skips deleted or superseded refs; lookup/authentication errors fail closed. GitHub's queue is finite, and a canceled run can be rerun if its ref remains current. A newer push after that check remains undelivered until it passes verification. Deleted Git tags do not delete published images.
 
-CI uses Node 24 and isolated PostgreSQL 18, runs `npm ci`, `npm run typecheck`, and `npm test` (the existing suite in `apps/api/test`), then builds the existing Dockerfile and smokes its actual entrypoint. Smoke checks bounded API health and built frontend startup on port 4893, migrations, UID 1000, and exclusion of canary runtime secrets/data from image files and layers. Only afterward does CI authenticate and push the **same tested local image**, full-commit tag first and delivery tag last, with no second build. Failed gates write nothing to the registry; a later transfer failure can leave a verified commit tag without completing the delivery tag.
+CI uses Node 24 and isolated PostgreSQL 18, runs `npm ci`, `npm run typecheck`, and `npm test` (the PostgreSQL-backed suite in `apps/api/test` and release-policy regressions in `scripts/test`), then builds the existing Dockerfile and smokes its actual entrypoint. Smoke checks bounded API health and built frontend startup on port 4893, migrations, UID 1000, and exclusion of canary runtime secrets/data from image files and layers. Only afterward does CI authenticate and push the **same tested local image**, full-commit tag first and delivery aliases afterward, with no second build. Failed gates write nothing to the registry and create no release tag or GitHub Release; a later transfer failure can leave some verified references without completing all aliases.
 
-`scripts/publish-image.mjs resolve` reads GitHub event/ref/repository environment and actual Git HEAD to validate references; `eligible` uses `GITHUB_TOKEN`, `GITHUB_API_URL`, and `SOURCE_COMMIT` to authenticate and check the current ref; `push` uses `IMAGE`, `SOURCE_COMMIT`, `DELIVERY_TAG`, and `CANDIDATE_IMAGE` to retag/push the tested candidate and report digest/source evidence. These are workflow helpers, not deployment commands.
+Only after the full-commit reference and **all** release delivery aliases have been pushed successfully, CI creates an annotated Git tag `vX.Y.Z` at the exact source commit and a GitHub Release with generated notes. The release body records the version image reference and first successful exact image digest. An existing release tag pointing at another commit fails before image publication; a matching tag and existing release are retry-safe and are not duplicated or rewritten, preserving their generated notes and recorded digest. Tags created with `GITHUB_TOKEN` do not trigger another workflow run: the main run performs all image, tag, and release work.
+
+#### Preparing a release
+
+Bump the root package version manually in a **separate release commit**, not automatically for each feature commit. From the repository root, choose one command:
+
+```sh
+npm version patch --no-git-tag-version
+# Or: npm version minor --no-git-tag-version
+# Or: npm version major --no-git-tag-version
+git add package.json package-lock.json
+git commit -m "chore(release): bump version to X.Y.Z"
+```
+
+Push that release commit through the normal main workflow. The initial `0.2.0` version addition qualifies as the first release. Do not create a Git tag as part of the npm bump; CI creates it only after verification and image publication. For a deliberate manual tag publication, use only `vX.Y.Z` matching the root version at its target commit; it does not advance the main/latest channel.
+
+To retry publication, rerun the existing Actions run or use Actions **Run workflow**, selecting current `main` or a matching stable `vX.Y.Z` ref. Manual runs use the same version checks, verification gates, and authenticated current-ref eligibility as pushes. Pushing an already-present unchanged Git tag alone creates no event.
 
 For a reproducible local CI-style smoke on Linux with Docker and Node 24, use an isolated database, not `.env` or the shop database. Ensure port 4893 is free. The helper supplies synthetic bot/seller settings and temporary writable media, uses host networking, and cleans up its container/media:
 
@@ -157,6 +174,7 @@ For a reproducible local CI-style smoke on Linux with Docker and Node 24, use an
   docker build --platform linux/amd64 \
     --label org.opencontainers.image.source=https://github.com/nikhcevov/order-manager-for-wife \
     --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
+    --label "org.opencontainers.image.version=$(node -p "require('./package.json').version")" \
     -t "$candidate" .
   SMOKE_IMAGE="$candidate" node scripts/smoke-image.mjs
 )
@@ -166,7 +184,7 @@ This requires no real Telegram token or Unraid credentials. Synthetic smoke does
 
 #### Registry permissions and private pulls
 
-The workflow grants only `contents: read` and `packages: write`, disables persisted checkout credentials, and supplies repository-scoped `GITHUB_TOKEN` only to authenticated API/login steps. The workflow token and OCI source label link the GHCR package to this repository. If publishing fails on permissions, check repository Actions policy and the package's repository access/Actions access; fix that linkage instead of substituting a broad PAT. Never supply shop bot tokens, database passwords, or Unraid access as publishing secrets or Docker build arguments.
+Only the publishing job receives `contents: write` and `packages: write`, for release tags/GitHub Releases and GHCR respectively. These job-scoped permissions cover its verification, build, and publication steps; they are not per-step permission isolation. Checkout credentials are not persisted, and repository-scoped `GITHUB_TOKEN` is explicitly supplied in the environment only to authenticated API/login steps. The workflow token and OCI source label link the GHCR package to this repository. If publishing fails on permissions, check repository Actions policy and the package's repository access/Actions access; fix that linkage instead of substituting a broad PAT. Never supply shop bot tokens, database passwords, or Unraid access as publishing secrets or Docker build arguments.
 
 Initial GHCR packages default to private; existing visibility is preserved, and CI never makes them public. Public packages permit anonymous pulls. Private pulls require an authorized **classic PAT** with `read:packages`, access to the package, and any required organization SSO authorization. On Unraid, enter your GitHub username and token interactively, without placing the token in `.env`, Compose, command history, or committed files:
 
@@ -191,7 +209,7 @@ Docker stores login credentials in its credential configuration; use a credentia
 Both services load their container settings from `.env` beside the Compose file. Use `.env.production.example` as the complete production template; for an existing deployment, update your existing `.env` without overwriting its credentials. In particular:
 
 ```dotenv
-APP_IMAGE=ghcr.io/nikhcevov/order-manager-for-wife:main
+APP_IMAGE=ghcr.io/nikhcevov/order-manager-for-wife:latest
 APP_DATA_DIR=/mnt/cache/appdata/order-manager
 NODE_ENV=production
 HOST=0.0.0.0
@@ -241,7 +259,7 @@ Uploads persist under `${APP_DATA_DIR}/media`. PostgreSQL 18 mounts `${APP_DATA_
 
 #### Deliberate app updates and rollback
 
-Before relying on GHCR, confirm successful authorized main and Git-tag publication and an isolated pull/start; local smoke alone does not prove live registry access. Choose `APP_IMAGE` in your existing `.env`: `main`, an exact release tag, a full `sha-<commit>` reference as described above, or a recorded registry digest. Never overwrite real credentials with the example template.
+Before relying on GHCR, confirm successful authorized main and stable release publication and an isolated pull/start; local smoke alone does not prove live registry access. Choose `APP_IMAGE` in your existing `.env`: `latest`/`main` for the latest verified main commit, `0.2.0` for a release, `0.2` or `0` for moving minor/major release channels, a full `sha-<commit>` reference as described above, or a recorded registry digest for exact bytes. Git release tag `v0.2.0` maps to image tag `0.2.0`, not `v0.2.0`. All updates remain manual, even when a moving alias advances. Never overwrite real credentials with the example template.
 
 Before updating, record the current app's exact image digest in protected operator notes:
 

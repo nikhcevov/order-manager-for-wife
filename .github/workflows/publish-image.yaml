@@ -3,11 +3,11 @@ name: Publish application image
 on:
   push:
     branches: [main]
-    tags: ['**']
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
 
 # One repository-wide publication queue, not one queue per branch/tag.
 concurrency:
@@ -20,6 +20,9 @@ jobs:
     if: github.event.deleted != true
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    permissions:
+      contents: write
+      packages: write
     services:
       postgres:
         image: postgres:18
@@ -42,6 +45,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+          fetch-depth: 0
       - name: Select Node 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -65,6 +69,7 @@ jobs:
           CANDIDATE_IMAGE: ${{ steps.resolve.outputs.candidate }}
           SOURCE_COMMIT: ${{ steps.resolve.outputs.commit }}
           SOURCE_REPOSITORY: ${{ github.repository }}
+          IMAGE_VERSION: ${{ steps.resolve.outputs.version }}
         run: |
           mkdir -p var
           printf '%s\n' 'isolated-publishing-canary-not-a-shop-secret' > .env.publishing-canary
@@ -72,6 +77,7 @@ jobs:
           docker build --platform linux/amd64 \
             --label "org.opencontainers.image.source=https://github.com/$SOURCE_REPOSITORY" \
             --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
+            --label "org.opencontainers.image.version=$IMAGE_VERSION" \
             --tag "$CANDIDATE_IMAGE" .
       - name: Smoke the exact candidate entrypoint and image layers
         if: steps.resolve.outputs.eligible == 'true'
@@ -84,6 +90,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SOURCE_COMMIT: ${{ steps.resolve.outputs.commit }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.releaseTag }}
         run: node scripts/publish-image.mjs eligible
       - name: Authenticate GHCR after all verification
         if: steps.current.outputs.eligible == 'true'
@@ -93,12 +100,23 @@ jobs:
         run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
       - name: Push tested commit reference then delivery reference
         if: steps.current.outputs.eligible == 'true'
+        id: published
         env:
           IMAGE: ${{ steps.resolve.outputs.image }}
           SOURCE_COMMIT: ${{ steps.resolve.outputs.commit }}
-          DELIVERY_TAG: ${{ steps.resolve.outputs.tag }}
+          DELIVERY_TAGS: ${{ steps.resolve.outputs.tags }}
           CANDIDATE_IMAGE: ${{ steps.resolve.outputs.candidate }}
+          IMAGE_VERSION: ${{ steps.resolve.outputs.version }}
         run: node scripts/publish-image.mjs push
+      - name: Create annotated version tag and GitHub Release
+        if: steps.current.outputs.eligible == 'true' && steps.resolve.outputs.releaseTag != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ steps.resolve.outputs.commit }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.releaseTag }}
+          IMAGE: ${{ steps.resolve.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.published.outputs.digest }}
+        run: node scripts/publish-image.mjs release
       - name: Remove synthetic build canaries and registry session
         if: always()
         run: |
