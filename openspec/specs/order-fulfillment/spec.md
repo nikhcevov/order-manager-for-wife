@@ -6,82 +6,93 @@ Combine a customer's purchases into one package or one in-person handover while 
 
 ## Requirements
 
-### Requirement: Customer-owned fulfillment groups
-The system SHALL let a customer associate multiple whole orders with one open fulfillment group owned by that customer. Each active order SHALL belong to exactly one group, and grouping SHALL NOT merge order references, totals, evidence, or payment statuses.
+### Requirement: Automatic fulfillment packages
+The system SHALL assign each confirmed order to its owner's single open package without asking the customer to choose one. Each active order SHALL belong to exactly one package, and packaging SHALL NOT merge order references, totals, evidence, or payment statuses.
 
 #### Scenario: Additional purchase joins earlier purchases
-- **WHEN** a customer places another order and selects their existing open group
-- **THEN** the new order appears in that group while retaining its own payment obligation and history
+- **WHEN** a customer places another order while a package is open
+- **THEN** the new order joins that package automatically while retaining its own payment obligation and history
 
-#### Scenario: Attempt to join another customer's group
-- **WHEN** a customer supplies a group owned by someone else
-- **THEN** the association is rejected without changing either customer's records
+#### Scenario: Purchase after the previous package shipped
+- **WHEN** a customer places an order after their previous package was completed
+- **THEN** a new open package is created for the order
 
-### Requirement: One fulfillment method per group
-Each fulfillment group SHALL have exactly one method, delivery or in-person handover, applying to all its included purchases. A customer SHALL select the method when creating the group and SHALL be able to change it while the group is open. Different methods SHALL require separate groups, not mixed item-level choices.
+#### Scenario: No customer package selection
+- **WHEN** a customer confirms an order
+- **THEN** the checkout request carries no package identifier and the server chooses the package
 
-#### Scenario: Choose in-person handover
-- **WHEN** a customer selects in-person handover for an open group
-- **THEN** every included purchase is scheduled for that handover and delivery-code controls are absent
+### Requirement: Seller-chosen fulfillment method at shipment
+Each shipment SHALL have exactly one method, delivery or in-person handover, applying to all its included purchases. The seller SHALL choose the method when shipping, and an open package SHALL have no method.
 
-#### Scenario: Separate delivery and handover
-- **WHEN** a customer wants some orders delivered and others handed over
-- **THEN** they must use separate groups, each with a single method
+#### Scenario: Ship as delivery
+- **WHEN** the seller ships a package as delivery
+- **THEN** every included purchase is recorded as sent and delivery-code controls apply
 
-### Requirement: Optional customer-supplied delivery code
-The system SHALL let the owning customer add or replace an optional delivery code on an open delivery group after creating a shipment request externally. It SHALL NOT require a code to order, pay, or mark a purchase paid. In-person groups SHALL have no active delivery code.
+#### Scenario: Ship as in-person handover
+- **WHEN** the seller ships a package as in-person handover
+- **THEN** every included purchase is recorded as handed over and any stored delivery code is not part of the shipment
 
-#### Scenario: Paid delivery without a code
-- **WHEN** a customer has paid but has not supplied a delivery code
+### Requirement: Optional shared delivery code
+The system SHALL let the package owner or the seller set or replace one optional delivery code on an open package. The code SHALL NOT be required to order, pay, or mark a purchase paid, and it SHALL be consumed by the shipment that closes the package.
+
+#### Scenario: Owner supplies a code
+- **WHEN** the customer sets a delivery code on their open package
+- **THEN** the seller sees that code for the whole package and the customer is not asked for another for the same package
+
+#### Scenario: Paid package without a code
+- **WHEN** a package is paid and unshipped without a delivery code
 - **THEN** the purchases remain bought and the seller sees a missing-code indicator rather than an unpaid or expired order
 
-#### Scenario: Change method to in person
-- **WHEN** the customer switches an open group from delivery to in-person handover
-- **THEN** the active delivery code is cleared and no delivery code is required for completion
+### Requirement: Atomic paid-only shipment
+Shipping SHALL complete in a single seller action that requires at least one paid order, records the chosen method, and rejects the action while any included order has an unresolved change request.
+
+#### Scenario: Pending change request blocks shipment
+- **WHEN** an included order has an unresolved change request
+- **THEN** shipment is rejected until the request is approved, rejected, or withdrawn
+
+#### Scenario: No paid orders
+- **WHEN** the seller attempts to ship a package with no paid orders
+- **THEN** the shipment is rejected without changing any order
+
+### Requirement: Package history after shipment
+A shipped package SHALL be immutable and remain visible to the customer and seller as fulfillment history.
+
+#### Scenario: Contents frozen after shipment
+- **WHEN** a package has been shipped
+- **THEN** its included orders, method, and recorded code cannot be changed
 
 ### Requirement: Paid-only packing list
-The seller SHALL see a combined list of paid, unfulfilled items for each group and a separate list of unpaid or review-held orders. Unpaid quantities SHALL NOT be counted as ready to pack or marked sent or handed over.
+The seller SHALL see a combined list of paid, unshipped items for each open package and a separate list of unpaid or review-held orders. Unpaid quantities SHALL NOT be counted as ready to ship or marked sent or handed over.
 
 #### Scenario: Paid purchases with an unpaid addition
-- **WHEN** a group contains two paid orders and one awaiting-payment order
-- **THEN** the seller sees the paid packing contents separately from the unpaid addition and can choose to wait or fulfill only the paid orders
+- **WHEN** a package contains two paid orders and one awaiting-payment order
+- **THEN** the seller sees the paid shipment contents separately from the unpaid addition and can choose to wait or ship only the paid orders
 
 ### Requirement: Fulfill paid orders without silently including unpaid orders
-The system SHALL let the seller move paid orders into packing while leaving unpaid orders in an open group for later fulfillment. This selection SHALL preserve whole-order membership and SHALL NOT cancel unpaid reservations or merge their payment obligations.
+The system SHALL ship paid orders while leaving unpaid and review-held orders in a fresh open package for later fulfillment. Shipping SHALL preserve whole-order membership and SHALL NOT cancel unpaid reservations or merge their payment obligations.
 
 #### Scenario: Seller chooses to ship paid purchases now
-- **WHEN** the seller chooses paid-only fulfillment for a mixed-payment group
-- **THEN** the paid orders enter one packing group and the remaining unpaid orders stay in an open group visible to the customer
-
-### Requirement: Packing freezes customer changes
-The system SHALL prevent customers from adding orders, changing method or code, or requesting item changes in a packing group. The seller SHALL be able to reopen an uncompleted packing group before accepting changes. Unresolved order-change requests SHALL prevent a group from entering packing or completing fulfillment.
-
-#### Scenario: Customer buys while earlier purchases are packing
-- **WHEN** a customer places a new order after their earlier group enters packing
-- **THEN** the new order uses an open or new group unless the seller explicitly reopens the earlier group
-
-#### Scenario: Pending replacement during packing preparation
-- **WHEN** an included order has an unresolved replacement request
-- **THEN** packing cannot begin until the request is approved, rejected, or withdrawn
+- **WHEN** the seller ships a package that also contains unpaid orders
+- **THEN** the paid orders become part of the shipment and the remaining unpaid orders move to a new open package visible to the customer
 
 ### Requirement: Explicit fulfillment completion
-The system SHALL let the seller complete a paid packing group as sent for delivery or handed over for in-person fulfillment. A missing delivery code SHALL show a warning but SHALL NOT prohibit seller completion. Completed groups SHALL reject new orders and content changes and remain visible in customer history.
+The system SHALL let the seller complete an open package as sent for delivery or handed over for in-person fulfillment in a single action. A missing delivery code SHALL show a warning but SHALL NOT prohibit completion. Completed packages SHALL reject new orders and content changes and remain visible in customer history.
 
 #### Scenario: Complete delivery without a code
-- **WHEN** the seller confirms that a delivery group without a code has been sent
+- **WHEN** the seller ships a delivery package whose open package has no code
 - **THEN** the app warns about the absent code and permits explicit completion without changing payment status
 
 #### Scenario: Complete in-person handover
-- **WHEN** the seller marks an in-person group handed over
-- **THEN** all its included paid orders are recorded as fulfilled without asking for a delivery code
+- **WHEN** the seller completes an in-person handover
+- **THEN** every included paid order is recorded as fulfilled without asking for a delivery code
 
 #### Scenario: Order after completion
-- **WHEN** the customer places another order after the group was sent or handed over
-- **THEN** the new order belongs to an open or new group and the completed group remains unchanged
+- **WHEN** the customer places another order after the package was sent or handed over
+- **THEN** the new order opens a new package and the completed package remains unchanged
 
 ### Requirement: Shared fulfillment visibility
-The system SHALL show the owner and seller the group's method, associated order references, payment readiness, delivery code where applicable, packing state, and completion state. Paid purchases awaiting fulfillment SHALL NOT expire because delivery information is missing.
+The system SHALL show the owner and seller the package's order references, payment readiness, delivery code when present, and completion state. Paid purchases awaiting fulfillment SHALL NOT expire because delivery information is missing.
 
 #### Scenario: Customer checks delivery progress
-- **WHEN** a customer opens their delivery group
-- **THEN** they see their submitted code, included orders, and whether the group is open, packing, or sent
+- **WHEN** a customer opens their package
+- **THEN** they see the included orders, any shared delivery code, and whether the package is open or shipped
