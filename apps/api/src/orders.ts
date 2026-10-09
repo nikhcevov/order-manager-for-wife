@@ -28,7 +28,7 @@ interface LockedOrder {
   id:string; user_id:string; group_id:string; status:string; deadline:Date; current_revision:string;
   version:number; currency:string;
 }
-interface LockedGroup { id:string; user_id:string; method:string; state:string; version:number }
+interface LockedGroup { id:string; user_id:string; method:string|null; state:string; version:number }
 interface Product { id:string; name:string; price:number; remaining_unsold:number; published:boolean }
 interface ChangeRequest {
   id:string; order_id:string; base_revision:string; selection:Selection; requested_total:number;
@@ -93,15 +93,15 @@ async function lockedOrder<T>(pool:Pool, req:FastifyRequest, id:string,
     const order = (await client.query<LockedOrder>('SELECT * FROM orders WHERE id=$1 FOR UPDATE',[id])).rows[0];
     if (!group || !order) throw new ApiError(404,'not_found','Order not found.');
     owner(req,order.user_id);
-    // Packing can move a whole order between groups while our first read is waiting.
+    // Shipping can move a whole order between packages while our first read is waiting.
     // Do not acquire its new group after an order lock (the global lock order forbids it).
     if (order.group_id !== group.id) throw new ApiError(409,'group_changed','This order moved to another fulfillment group. Refresh and try again.');
     return action(client,order,group);
   });
 }
 
-function openGroup(group:LockedGroup):void {
-  if (group.state !== 'open') throw new ApiError(409,'group_frozen','Reopen the packing group before changing orders; completed fulfillment cannot be changed.');
+function openPackage(group:LockedGroup):void {
+  if (group.state !== 'open') throw new ApiError(409,'package_completed','This package has already been shipped. Shipped packages cannot be changed.');
 }
 
 async function linesFor(client:Queryable, revisionId:string):Promise<OrderLine[]> {
@@ -210,6 +210,19 @@ async function bumpGroup(client:PoolClient, id:string):Promise<void> {
   await client.query('UPDATE fulfillment_groups SET version=version+1 WHERE id=$1',[id]);
 }
 
+// Every customer has at most one open package; a confirmed order joins it, creating one if needed.
+// The partial unique index guarantees the invariant under concurrent checkouts.
+async function openPackageId(client:PoolClient, userId:string):Promise<string> {
+  const find = async ():Promise<{id:string}|undefined> => (await client.query<{id:string}>(
+    "SELECT id FROM fulfillment_groups WHERE user_id=$1 AND state='open' FOR UPDATE",[userId])).rows[0];
+  const existing = await find();
+  if (existing) return existing.id;
+  const inserted = (await client.query<{id:string}>(
+    "INSERT INTO fulfillment_groups(id,user_id) VALUES($1,$2) ON CONFLICT (user_id) WHERE state='open' DO NOTHING RETURNING id",
+    [randomUUID(),userId])).rows[0];
+  return inserted ? inserted.id : (await find())!.id;
+}
+
 async function adjustPaidStock(client:PoolClient, products:Map<string,Product>, old:OrderLine[], desired:OrderLine[]):Promise<void> {
   const before = quantities(old);
   const after = quantities(desired);
@@ -249,8 +262,7 @@ export async function registerOrders(app:FastifyInstance, pool:Pool, config:Conf
 
   app.post('/api/orders',async req => {
     const body = z.object({items:selection.refine(items => items.length>0,'Select at least one item.'),
-      expectedTotal:amount,key:z.string().trim().min(1).max(200),
-      method:z.enum(['delivery','in_person']),groupId:uuid.optional()}).strict().parse(req.body);
+      expectedTotal:amount,key:z.string().trim().min(1).max(200)}).strict().parse(req.body);
     const canonical = {...body,items:[...body.items].sort((a,b) => a.productId.localeCompare(b.productId))};
     const hash = createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
     return transaction(pool,async client => {
@@ -262,15 +274,7 @@ export async function registerOrders(app:FastifyInstance, pool:Pool, config:Conf
         if (previous.payload_hash !== hash) throw new ApiError(409,'idempotency_conflict','This checkout key was already used for a different selection.');
         return readOrder(client,previous.order_id);
       }
-      const groupId = body.groupId ?? randomUUID();
-      if (body.groupId) {
-        const group = (await client.query<LockedGroup>('SELECT * FROM fulfillment_groups WHERE id=$1 FOR UPDATE',[groupId])).rows[0];
-        if (!group || group.user_id !== req.user.id) throw new ApiError(404,'not_found','Fulfillment group not found.');
-        openGroup(group);
-        if (group.method !== body.method) throw new ApiError(409,'group_method_mismatch','The checkout method must match the selected group.');
-      } else {
-        await client.query('INSERT INTO fulfillment_groups(id,user_id,method) VALUES($1,$2,$3)',[groupId,req.user.id,body.method]);
-      }
+      const groupId = await openPackageId(client,req.user.id);
       const products = await productsFor(client,body.items,[],true);
       const now = await databaseTime(client);
       const proposed = quote(body.items,[],products);
@@ -300,7 +304,7 @@ export async function registerOrders(app:FastifyInstance, pool:Pool, config:Conf
     const {id} = orderParams.parse(req.params);
     const body = z.object({version:expectedVersion,items:selection,expectedTotal:amount}).strict().parse(req.body);
     return lockedOrder(pool,req,id,async (client,order,group) => {
-      openGroup(group);
+      openPackage(group);
       await checkVersion(client,order,body.version);
       const old = await linesFor(client,order.current_revision);
       const products = await productsFor(client,body.items,old,true);
@@ -322,7 +326,7 @@ export async function registerOrders(app:FastifyInstance, pool:Pool, config:Conf
     const body = z.object({version:expectedVersion}).strict().parse(req.body);
     return lockedOrder(pool,req,id,async (client,order,group) => {
       if (order.status === 'cancelled') return readOrder(client,id);
-      openGroup(group);
+      openPackage(group);
       await checkVersion(client,order,body.version);
       const old = await linesFor(client,order.current_revision);
       await productsFor(client,[],old,true);
@@ -342,7 +346,7 @@ export async function registerOrders(app:FastifyInstance, pool:Pool, config:Conf
       const submitted = [...body.mediaIds].sort();
       if (existing.length && existing.length===submitted.length && existing.every((entry,index) => entry.media_id===submitted[index]))
         return readOrder(client,id);
-      openGroup(group);
+      openPackage(group);
       await checkVersion(client,order,body.version);
       const old = await linesFor(client,order.current_revision);
       const products = await productsFor(client,[],old,true);
@@ -380,7 +384,7 @@ export async function registerOrders(app:FastifyInstance, pool:Pool, config:Conf
         if (existing.decision===body.decision) return readOrder(client,id);
         throw new ApiError(409,'payment_already_decided','This payment already has a final decision.',{order:await readOrder(client,id)});
       }
-      openGroup(group);
+      openPackage(group);
       await checkVersion(client,order,body.version);
       if (order.status!=='payment_review') throw new ApiError(409,'invalid_order_state','Only submitted evidence can receive a payment decision.');
       const old = await linesFor(client,order.current_revision);
@@ -403,7 +407,7 @@ export async function registerOrders(app:FastifyInstance, pool:Pool, config:Conf
     const {id} = orderParams.parse(req.params);
     const body = z.object({version:expectedVersion,items:selection,expectedTotal:amount,note:note.optional()}).strict().parse(req.body);
     return lockedOrder(pool,req,id,async (client,order,group) => {
-      openGroup(group);
+      openPackage(group);
       await checkVersion(client,order,body.version);
       if (!['payment_review','paid'].includes(order.status)) throw new ApiError(409,'invalid_order_state','Reviewed changes require submitted evidence or a paid order.');
       if ((await client.query("SELECT 1 FROM change_requests WHERE order_id=$1 AND state='pending'",[id])).rowCount)
@@ -426,7 +430,7 @@ export async function registerOrders(app:FastifyInstance, pool:Pool, config:Conf
     return lockedOrder(pool,req,id,async (client,order,group) => {
       const change = await requestedChange(client,id,changeId);
       if (change.state==='withdrawn') return readOrder(client,id);
-      openGroup(group);
+      openPackage(group);
       await checkVersion(client,order,body.version);
       if (change.state!=='pending') throw new ApiError(409,'change_resolved','This change request is already resolved.');
       await client.query("UPDATE change_requests SET state='withdrawn',resolved_at=clock_timestamp() WHERE id=$1",[changeId]);
@@ -444,7 +448,7 @@ export async function registerOrders(app:FastifyInstance, pool:Pool, config:Conf
     return lockedOrder(pool,req,id,async (client,order,group) => {
       const change = await requestedChange(client,id,changeId);
       if (change.state===body.decision) return readOrder(client,id);
-      openGroup(group);
+      openPackage(group);
       await checkVersion(client,order,body.version);
       if (change.state!=='pending') throw new ApiError(409,'change_resolved','This change request is already resolved.');
       if (body.decision==='rejected') {

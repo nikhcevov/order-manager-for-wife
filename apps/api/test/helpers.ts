@@ -30,7 +30,7 @@ export interface Revision { id: string; number: number; total: number; lines: Li
 export interface Evidence { id: string; media_id: string; revision_id: string }
 export interface Change { id: string; base_revision: string; state: string; requested_total: number; difference: number | null; settlement_note: string; reason: string }
 export interface Order { id: string; reference: string; user_id: string; group_id: string; status: string; deadline: string; current_revision: string; version: number; currency: string; total: number; lines: Line[]; revisions: Revision[]; evidence: Evidence[]; decision: null | { decision: string; reason: string; revision_id: string }; changes: Change[] }
-export interface Group { id: string; user_id: string; method: 'delivery' | 'in_person'; delivery_code: string | null; state: string; version: number; completion_kind: string | null; completed_at: string | null; orders: Order[]; packing_lines: Line[] }
+export interface Group { id: string; user_id: string; method: 'delivery' | 'in_person' | null; delivery_code: string | null; state: string; version: number; completion_kind: string | null; completed_at: string | null; orders: Order[]; packing_lines: Line[] }
 export interface Item { productId: string; quantity: number }
 export interface Session { token: string; user: { id: string; first_name: string; username: string; isSeller: boolean }; currency: string; paymentInstructions: string; holdMinutes: number }
 export interface ApiFailure { error: string; message: string; details?: Record<string, unknown> }
@@ -145,10 +145,18 @@ export class Harness {
     return this.api('POST', '/api/orders/preview', token, { items, ...(orderId ? { orderId } : {}) });
   }
 
-  async checkout(items: Item[], options: { token?: string; groupId?: string; method?: 'delivery' | 'in_person'; key?: string; expectedTotal?: number } = {}): Promise<Order> {
+  async checkout(items: Item[], options: { token?: string; key?: string; expectedTotal?: number } = {}): Promise<Order> {
     const token = options.token ?? this.alice;
     const expectedTotal = options.expectedTotal ?? (await this.preview(items, token)).total;
-    return this.api<Order>('POST', '/api/orders', token, { items, expectedTotal, key: options.key ?? `checkout-${++this.sequence}`, method: options.method ?? 'delivery', ...(options.groupId ? { groupId: options.groupId } : {}) });
+    return this.api<Order>('POST', '/api/orders', token, { items, expectedTotal, key: options.key ?? `checkout-${++this.sequence}` });
+  }
+
+  async ship(group: Group, method: 'delivery' | 'in_person' = 'delivery', options: { deliveryCode?: string | null; allowMissingCode?: boolean; version?: number } = {}): Promise<Group> {
+    return this.api<Group>('POST', `/api/seller/groups/${group.id}/ship`, this.seller, {
+      version: options.version ?? group.version, method,
+      ...(options.deliveryCode === undefined ? {} : { deliveryCode: options.deliveryCode }),
+      ...(options.allowMissingCode === undefined ? {} : { allowMissingCode: options.allowMissingCode })
+    });
   }
 
   async review(order: Order, token = this.alice): Promise<Order> {

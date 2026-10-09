@@ -59,7 +59,7 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
       await h.denied('GET', `/api/orders/${order.id}`, h.bob, undefined, [403, 404]);
       await h.denied('GET', '/api/orders/ORD-1', h.alice, undefined, [400]);
       await h.denied('POST', `/api/orders/${order.id}/changes`, h.bob, { version: order.version, items: [], expectedTotal: 0 }, [403, 404]);
-      await h.denied('PATCH', `/api/groups/${group.id}`, h.bob, { version: group.version, method: 'delivery', deliveryCode: 'private-code' }, [403, 404]);
+      await h.denied('PATCH', `/api/groups/${group.id}`, h.bob, { version: group.version, deliveryCode: 'private-code' }, [403, 404]);
       await h.denied('GET', `/api/media/${image}`, h.bob, undefined, [403, 404]);
       await h.denied('GET', `/api/media/${image}`, undefined, undefined, [401]);
       await h.denied('GET', `/api/public-media/${image}`, undefined, undefined, [404]);
@@ -70,7 +70,7 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
       }
       await h.denied('POST', `/api/seller/orders/${order.id}/payment`, h.alice, { version: order.version, decision: 'confirmed' }, [403]);
       await h.denied('POST', '/api/seller/products/publish', h.alice, { ids: [product.id] }, [403]);
-      await h.denied('POST', `/api/seller/groups/${group.id}/pack`, h.alice, { version: group.version }, [403]);
+      await h.denied('POST', `/api/seller/groups/${group.id}/ship`, h.alice, { version: group.version, method: 'delivery' }, [403]);
       const listed = await h.api<Order[]>('GET', '/api/orders', h.bob);
       assert.deepEqual(listed, []);
       assert.deepEqual(await h.api<Group[]>('GET', '/api/groups', h.bob), []);
@@ -126,7 +126,7 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
       await h.denied('GET', `/api/public-media/${first.images[0]}`, undefined, undefined, [404]);
       await h.denied('GET', `/api/media/${first.images[0]}`, h.alice, undefined, [403, 404]);
       assert.equal((await h.request('GET', `/api/media/${first.images[0]}`, h.seller)).statusCode, 200);
-      await h.denied('POST', '/api/orders', h.alice, { items: [{ productId: first.id, quantity: 1 }], expectedTotal: 125, key: 'draft', method: 'delivery' }, [400, 404, 409]);
+      await h.denied('POST', '/api/orders', h.alice, { items: [{ productId: first.id, quantity: 1 }], expectedTotal: 125, key: 'draft' }, [400, 404, 409]);
       await h.denied('POST', '/api/seller/products/publish', h.seller, { ids: [first.id, randomUUID()] }, [400, 404, 409]);
       assert.deepEqual(await h.api('GET', '/api/products', h.alice), []);
       const stored = (await h.pool.query('SELECT storage_key FROM media WHERE id=$1', [second.images[0]])).rows[0].storage_key;
@@ -189,7 +189,7 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
       const product = await h.product(100, 1);
       assert.equal((await h.preview([{ productId: product.id, quantity: 1 }])).total, 100);
       assert.equal((await h.getProduct(product.id)).available, 1);
-      const payload = { items: [{ productId: product.id, quantity: 1 }], expectedTotal: 100, method: 'delivery' };
+      const payload = { items: [{ productId: product.id, quantity: 1 }], expectedTotal: 100 };
       const results = await Promise.all([
         h.request('POST', '/api/orders', h.alice, { ...payload, key: 'alice-last-unit' }),
         h.request('POST', '/api/orders', h.bob, { ...payload, key: 'bob-last-unit' })
@@ -209,9 +209,9 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
     it('rolls back all items on shortage and rejects empty, duplicate or invalid quantities', async () => {
       const first = await h.product(100, 2);
       const second = await h.product(200, 0);
-      await h.denied('POST', '/api/orders', h.alice, { items: [{ productId: first.id, quantity: 1 }, { productId: second.id, quantity: 1 }], expectedTotal: 300, key: 'shortage', method: 'delivery' });
+      await h.denied('POST', '/api/orders', h.alice, { items: [{ productId: first.id, quantity: 1 }, { productId: second.id, quantity: 1 }], expectedTotal: 300, key: 'shortage' });
       for (const items of [[], [{ productId: first.id, quantity: 0 }], [{ productId: first.id, quantity: 1.5 }], [{ productId: first.id, quantity: 1 }, { productId: first.id, quantity: 1 }]]) {
-        await h.denied('POST', '/api/orders', h.alice, { items, expectedTotal: 100, key: randomUUID(), method: 'delivery' }, [400]);
+        await h.denied('POST', '/api/orders', h.alice, { items, expectedTotal: 100, key: randomUUID() }, [400]);
       }
       assert.equal(await h.count('orders'), 0);
       assert.equal(await h.count('order_revisions'), 0);
@@ -225,17 +225,17 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
       const items = [{ productId: product.id, quantity: 1 }];
       const oldPreview = await h.preview(items);
       product = await h.updateProduct(product, { price: 175 });
-      const outdated = await h.denied('POST', '/api/orders', h.alice, { items, expectedTotal: oldPreview.total, key: 'accepted-key', method: 'delivery' });
+      const outdated = await h.denied('POST', '/api/orders', h.alice, { items, expectedTotal: oldPreview.total, key: 'accepted-key' });
       assert.equal(outdated.error, 'price_changed');
       assert.equal(await h.count('orders'), 0);
-      const payload = { items, expectedTotal: 175, key: 'accepted-key', method: 'delivery' };
+      const payload = { items, expectedTotal: 175, key: 'accepted-key' };
       const [left, right] = await Promise.all([
         h.api<Order>('POST', '/api/orders', h.alice, payload),
         h.api<Order>('POST', '/api/orders', h.alice, payload)
       ]);
       assert.equal(left.id, right.id);
       assert.equal((await h.api<Order>('POST', '/api/orders', h.alice, payload)).id, left.id);
-      for (const patch of [{ expectedTotal: 100 }, { method: 'in_person' }, { items: [{ productId: product.id, quantity: 2 }] }]) {
+      for (const patch of [{ expectedTotal: 100 }, { expectedTotal: 350 }, { items: [{ productId: product.id, quantity: 2 }] }]) {
         assert.equal((await h.denied('POST', '/api/orders', h.alice, { ...payload, ...patch })).error, 'idempotency_conflict');
       }
       assert.equal(await h.count('orders'), 1);
@@ -392,7 +392,7 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
       assert.equal(paid.revisions.length, 3);
       assert.deepEqual((await h.getGroup(paid.group_id, h.seller)).packing_lines, []);
       const group = await h.getGroup(paid.group_id);
-      await h.denied('POST', `/api/seller/groups/${group.id}/pack`, h.seller, { version: group.version });
+      await h.denied('POST', `/api/seller/groups/${group.id}/ship`, h.seller, { version: group.version, method: 'delivery' });
     });
 
     it('preserves accepted price lots when review-held and paid corrections add units after a price change', async () => {
@@ -516,7 +516,7 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
       const image = await h.request('GET', `/api/media/${reviewed.evidence[0]!.media_id}`, h.seller);
       assert.equal(image.statusCode, 200);
       assert.equal((await sharp(image.rawPayload).metadata()).height, 48);
-      await h.denied('POST', '/api/orders', h.bob, { items: [{ productId: product.id, quantity: 3 }], expectedTotal: 300, key: 'review-still-held', method: 'delivery' });
+      await h.denied('POST', '/api/orders', h.bob, { items: [{ productId: product.id, quantity: 3 }], expectedTotal: 300, key: 'review-still-held' });
     });
 
     it('confirms payment once despite concurrent duplicate decisions; never expires paid purchases', async () => {
@@ -566,15 +566,15 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
     });
   });
 
-  describe('order-fulfillment: whole-group method, packing, splitting and completion', () => {
-    it('enforces customer association and one method, accepts optional code, and clears it on handover', async () => {
+  describe('order-fulfillment: automatic packages and atomic shipment', () => {
+    it('auto-assigns one open package per customer and lets either side set the shared delivery code', async () => {
       const product = await h.product(100, 8);
       const first = await h.checkout([{ productId: product.id, quantity: 1 }]);
       let group = await h.getGroup(first.group_id);
+      assert.equal(group.state, 'open');
+      assert.equal(group.method, null);
       assert.equal(group.delivery_code, null);
-      await h.denied('POST', '/api/orders', h.bob, { items: [{ productId: product.id, quantity: 1 }], expectedTotal: 100, key: 'foreign-group', method: 'delivery', groupId: group.id }, [403, 404]);
-      await h.denied('POST', '/api/orders', h.alice, { items: [{ productId: product.id, quantity: 1 }], expectedTotal: 100, key: 'mixed-method', method: 'in_person', groupId: group.id });
-      const second = await h.checkout([{ productId: product.id, quantity: 1 }], { groupId: group.id });
+      const second = await h.checkout([{ productId: product.id, quantity: 1 }]);
       assert.equal(second.group_id, first.group_id);
       assert.match(first.reference, /^ORD-\d+$/);
       assert.match(second.reference, /^ORD-\d+$/);
@@ -582,40 +582,43 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
       assert.ok(Number(second.reference.slice(4)) > Number(first.reference.slice(4)), 'later order must carry the greater reference');
       group = await h.getGroup(group.id);
       assert.equal(group.orders.length, 2);
-      group = await h.api<Group>('PATCH', `/api/groups/${group.id}`, h.alice, { version: group.version, method: 'delivery', deliveryCode: 'External-request-123' });
+      group = await h.api<Group>('PATCH', `/api/groups/${group.id}`, h.alice, { version: group.version, deliveryCode: 'External-request-123' });
       assert.equal(group.delivery_code, 'External-request-123');
-      group = await h.api<Group>('PATCH', `/api/groups/${group.id}`, h.alice, { version: group.version, method: 'delivery', deliveryCode: 'Replacement-request' });
-      assert.equal(group.delivery_code, 'Replacement-request');
+      group = await h.api<Group>('PATCH', `/api/groups/${group.id}`, h.seller, { version: group.version, deliveryCode: 'Seller-replacement' });
+      assert.equal(group.delivery_code, 'Seller-replacement');
       const previous = group.version;
-      group = await h.api<Group>('PATCH', `/api/groups/${group.id}`, h.alice, { version: group.version, method: 'in_person' });
-      assert.equal(group.method, 'in_person');
+      group = await h.api<Group>('PATCH', `/api/groups/${group.id}`, h.alice, { version: group.version, deliveryCode: null });
       assert.equal(group.delivery_code, null);
-      await h.denied('PATCH', `/api/groups/${group.id}`, h.alice, { version: previous, method: 'delivery' });
-      group = await h.api<Group>('PATCH', `/api/groups/${group.id}`, h.alice, { version: group.version, method: 'delivery' });
-      assert.equal(group.delivery_code, null);
+      await h.denied('PATCH', `/api/groups/${group.id}`, h.alice, { version: previous, deliveryCode: 'stale' });
+      await h.denied('PATCH', `/api/groups/${group.id}`, h.bob, { version: group.version, deliveryCode: 'not-mine' }, [403, 404]);
       assert.equal(await h.count('orders'), 2);
+      assert.equal(Number((await h.pool.query("SELECT count(*) AS count FROM fulfillment_groups WHERE state='open'")).rows[0]!.count), 1);
     });
 
-    it('packs only whole paid orders, splits unpaid and review-held additions without copying code, freezes and reopens', async () => {
+    it('ships every paid order in one action and leaves unpaid and review-held orders in a new open package', async () => {
       const paidProduct = await h.product(100, 10, 'Paid');
       const unpaidProduct = await h.product(200, 10, 'Unpaid');
       const first = await h.pay(await h.checkout([{ productId: paidProduct.id, quantity: 2 }]));
-      const second = await h.pay(await h.checkout([{ productId: paidProduct.id, quantity: 1 }], { groupId: first.group_id }));
-      const unpaid = await h.checkout([{ productId: unpaidProduct.id, quantity: 2 }], { groupId: first.group_id });
-      const reviewed = await h.review(await h.checkout([{ productId: unpaidProduct.id, quantity: 1 }], { groupId: first.group_id }));
+      const second = await h.pay(await h.checkout([{ productId: paidProduct.id, quantity: 1 }]));
+      const unpaid = await h.checkout([{ productId: unpaidProduct.id, quantity: 2 }]);
+      const reviewed = await h.review(await h.checkout([{ productId: unpaidProduct.id, quantity: 1 }]));
+      assert.equal(first.group_id, second.group_id, 'paid orders share one open package');
+      assert.equal(unpaid.group_id, first.group_id);
       let group = await h.getGroup(first.group_id);
-      group = await h.api<Group>('PATCH', `/api/groups/${group.id}`, h.alice, { version: group.version, method: 'delivery', deliveryCode: 'Keep-with-paid-package' });
+      group = await h.api<Group>('PATCH', `/api/groups/${group.id}`, h.alice, { version: group.version, deliveryCode: 'Keep-with-paid-package' });
       assert.deepEqual(quantities((await h.getGroup(group.id, h.seller)).packing_lines), { [paidProduct.id]: 3 });
       const beforePaid = await h.getProduct(paidProduct.id);
       const beforeUnpaid = await h.getProduct(unpaidProduct.id);
-      const packing = await h.api<Group>('POST', `/api/seller/groups/${group.id}/pack`, h.seller, { version: group.version });
-      assert.equal(packing.state, 'packing');
-      assert.equal(packing.delivery_code, 'Keep-with-paid-package');
-      assert.deepEqual(new Set(packing.orders.map(order => order.id)), new Set([first.id, second.id]));
-      assert.deepEqual(quantities(packing.packing_lines), { [paidProduct.id]: 3 });
+      const shipped = await h.ship(group);
+      assert.equal(shipped.state, 'completed');
+      assert.equal(shipped.completion_kind, 'sent');
+      assert.equal(shipped.method, 'delivery');
+      assert.equal(shipped.delivery_code, 'Keep-with-paid-package');
+      assert.deepEqual(shipped.orders.map(order => order.id).sort(), [first.id, second.id].sort());
+      assert.deepEqual(quantities(shipped.packing_lines), { [paidProduct.id]: 3 });
       const movedUnpaid = await h.getOrder(unpaid.id);
       const movedReview = await h.getOrder(reviewed.id);
-      assert.notEqual(movedUnpaid.group_id, packing.id);
+      assert.notEqual(movedUnpaid.group_id, shipped.id);
       assert.equal(movedUnpaid.group_id, movedReview.group_id);
       assert.equal(movedUnpaid.status, 'awaiting_payment');
       assert.equal(movedReview.status, 'payment_review');
@@ -623,73 +626,78 @@ describe('PostgreSQL-backed Telegram shop capability contracts', { concurrency: 
       assert.deepEqual(movedReview.evidence, reviewed.evidence);
       const remaining = await h.getGroup(movedUnpaid.group_id);
       assert.equal(remaining.state, 'open');
-      assert.equal(remaining.method, 'delivery');
+      assert.equal(remaining.method, null);
       assert.equal(remaining.delivery_code, null);
       assert.equal((await h.getProduct(paidProduct.id)).remaining_unsold, beforePaid.remaining_unsold);
       assert.equal((await h.getProduct(unpaidProduct.id)).reserved, beforeUnpaid.reserved);
-      await h.denied('PATCH', `/api/groups/${packing.id}`, h.alice, { version: packing.version, method: 'in_person' });
-      await h.denied('POST', '/api/orders', h.alice, { items: [{ productId: paidProduct.id, quantity: 1 }], expectedTotal: 100, key: 'frozen-addition', method: 'delivery', groupId: packing.id });
-      const firstCurrent = await h.getOrder(first.id);
-      await h.denied('POST', `/api/orders/${first.id}/changes`, h.alice, { version: firstCurrent.version, items: [], expectedTotal: 0 });
-      const fresh = await h.checkout([{ productId: paidProduct.id, quantity: 1 }]);
-      assert.notEqual(fresh.group_id, packing.id);
-      const reopened = await h.api<Group>('POST', `/api/seller/groups/${packing.id}/reopen`, h.seller, { version: packing.version });
-      assert.equal(reopened.state, 'open');
-      const changed = await h.api<Group>('PATCH', `/api/groups/${reopened.id}`, h.alice, { version: reopened.version, method: 'in_person' });
-      assert.equal(changed.delivery_code, null);
-      const request = await h.change(await h.getOrder(first.id), [{ productId: paidProduct.id, quantity: 1 }]);
-      assert.ok(request.changes.some(change => change.state === 'pending'));
+      const fresh = await h.pay(await h.checkout([{ productId: paidProduct.id, quantity: 1 }]));
+      assert.notEqual(fresh.group_id, shipped.id);
+      const shippedFirst = await h.getOrder(first.id);
+      await h.denied('POST', `/api/orders/${first.id}/changes`, h.alice, { version: shippedFirst.version, items: [], expectedTotal: 0 });
+      await h.denied('PATCH', `/api/groups/${shipped.id}`, h.alice, { version: shipped.version, deliveryCode: 'too-late' });
     });
 
-    it('blocks packing pending corrections, then warns for missing delivery code and completes exactly once without stock/payment mutation', async () => {
+    it('rejects shipping with pending corrections or no paid items, warns for a missing code, and ships exactly once', async () => {
       const product = await h.product(100, 5);
+      const bobUnpaid = await h.checkout([{ productId: product.id, quantity: 1 }], { token: h.bob });
+      const bobGroup = await h.getGroup(bobUnpaid.group_id, h.bob);
+      const noPaid = await h.denied('POST', `/api/seller/groups/${bobGroup.id}/ship`, h.seller, { version: bobGroup.version, method: 'delivery' });
+      assert.equal(noPaid.error, 'no_paid_items');
       let order = await h.pay(await h.checkout([{ productId: product.id, quantity: 2 }]));
       assert.equal((await h.getGroup(order.group_id)).delivery_code, null);
       order = await h.change(order, [{ productId: product.id, quantity: 1 }]);
-      let group = await h.getGroup(order.group_id);
-      await h.denied('POST', `/api/seller/groups/${group.id}/pack`, h.seller, { version: group.version });
+      const group = await h.getGroup(order.group_id);
+      await h.denied('POST', `/api/seller/groups/${group.id}/ship`, h.seller, { version: group.version, method: 'delivery' });
       const pending = order.changes.find(change => change.state === 'pending')!;
       order = await h.api<Order>('POST', `/api/seller/orders/${order.id}/changes/${pending.id}/resolve`, h.seller, { version: order.version, decision: 'rejected', reason: 'Keep both purchased items' });
-      group = await h.getGroup(group.id);
-      await h.denied('POST', `/api/seller/groups/${group.id}/complete`, h.seller, { version: group.version });
-      const packing = await h.api<Group>('POST', `/api/seller/groups/${group.id}/pack`, h.seller, { version: group.version });
-      const missingCode = await h.denied('POST', `/api/seller/groups/${packing.id}/complete`, h.seller, { version: packing.version });
+      const refreshed = await h.getGroup(group.id);
+      const missingCode = await h.denied('POST', `/api/seller/groups/${group.id}/ship`, h.seller, { version: refreshed.version, method: 'delivery' });
       assert.equal(missingCode.error, 'missing_delivery_code');
-      assert.equal((await h.getGroup(group.id)).state, 'packing');
+      assert.equal((await h.getGroup(group.id)).state, 'open');
       const before = await h.getProduct(product.id);
-      const completePayload = { version: packing.version, allowMissingCode: true };
-      const completed = await h.api<Group>('POST', `/api/seller/groups/${packing.id}/complete`, h.seller, completePayload);
-      assert.equal(completed.state, 'completed');
-      assert.equal(completed.completion_kind, 'sent');
-      assert.ok(completed.completed_at);
-      const repeated = await h.api<Group>('POST', `/api/seller/groups/${packing.id}/complete`, h.seller, completePayload);
-      assert.equal(repeated.version, completed.version);
-      assert.equal(repeated.completed_at, completed.completed_at);
+      const shipped = await h.ship(refreshed, 'delivery', { allowMissingCode: true });
+      assert.equal(shipped.state, 'completed');
+      assert.equal(shipped.completion_kind, 'sent');
+      assert.ok(shipped.completed_at);
+      const repeated = await h.ship(shipped, 'delivery', { allowMissingCode: true });
+      assert.equal(repeated.version, shipped.version);
+      assert.equal(repeated.completed_at, shipped.completed_at);
       assert.equal((await h.getProduct(product.id)).remaining_unsold, before.remaining_unsold);
       assert.equal((await h.getProduct(product.id)).bought, before.bought);
       assert.equal((await h.getOrder(order.id)).status, 'paid');
       assert.deepEqual((await h.getOrder(order.id)).decision, order.decision);
-      await h.denied('POST', '/api/orders', h.alice, { items: [{ productId: product.id, quantity: 1 }], expectedTotal: 100, key: 'completed-addition', method: 'delivery', groupId: completed.id });
-      await h.denied('PATCH', `/api/groups/${completed.id}`, h.alice, { version: completed.version, method: 'in_person' });
+      await h.denied('PATCH', `/api/groups/${shipped.id}`, h.alice, { version: shipped.version, deliveryCode: 'too-late' });
       await h.denied('POST', `/api/orders/${order.id}/changes`, h.alice, { version: order.version, items: [], expectedTotal: 0 });
-      await h.denied('POST', `/api/seller/groups/${completed.id}/reopen`, h.seller, { version: completed.version });
       const next = await h.checkout([{ productId: product.id, quantity: 1 }]);
-      assert.notEqual(next.group_id, completed.id);
-      assert.equal((await h.getGroup(completed.id)).completion_kind, 'sent');
+      assert.notEqual(next.group_id, shipped.id);
+      assert.equal((await h.getGroup(shipped.id)).completion_kind, 'sent');
     });
 
-    it('completes an in-person handover with no delivery code or extra stock effect', async () => {
+    it('ships an in-person handover without a code and discards a stored delivery code', async () => {
       const product = await h.product(100, 3);
-      const paid = await h.pay(await h.checkout([{ productId: product.id, quantity: 1 }], { method: 'in_person' }));
-      const group = await h.getGroup(paid.group_id);
-      assert.equal(group.method, 'in_person');
-      assert.equal(group.delivery_code, null);
-      const packing = await h.api<Group>('POST', `/api/seller/groups/${group.id}/pack`, h.seller, { version: group.version });
-      const completed = await h.api<Group>('POST', `/api/seller/groups/${group.id}/complete`, h.seller, { version: packing.version });
-      assert.equal(completed.completion_kind, 'handed_over');
-      assert.equal(completed.delivery_code, null);
+      const paid = await h.pay(await h.checkout([{ productId: product.id, quantity: 1 }]));
+      let group = await h.getGroup(paid.group_id);
+      assert.equal(group.method, null);
+      group = await h.api<Group>('PATCH', `/api/groups/${group.id}`, h.alice, { version: group.version, deliveryCode: 'Ignored-on-handover' });
+      assert.equal(group.delivery_code, 'Ignored-on-handover');
+      const shipped = await h.ship(group, 'in_person');
+      assert.equal(shipped.completion_kind, 'handed_over');
+      assert.equal(shipped.method, 'in_person');
+      assert.equal(shipped.delivery_code, null);
       assert.equal((await h.getProduct(product.id)).remaining_unsold, 2);
       assert.equal((await h.getOrder(paid.id)).status, 'paid');
+    });
+
+    it('hides and reuses an empty open package', async () => {
+      const product = await h.product(100, 2);
+      await h.pool.query("INSERT INTO fulfillment_groups(id,user_id) VALUES ('99999999-9999-9999-9999-999999999999',$1)", [String(ALICE.id)]);
+      assert.deepEqual(await h.api<Group[]>('GET', '/api/groups', h.alice), []);
+      assert.deepEqual(await h.api<Group[]>('GET', '/api/seller/groups', h.seller), []);
+      const order = await h.checkout([{ productId: product.id, quantity: 1 }]);
+      assert.equal(order.group_id, '99999999-9999-9999-9999-999999999999');
+      const groups = await h.api<Group[]>('GET', '/api/groups', h.alice);
+      assert.equal(groups.length, 1);
+      assert.equal(groups[0]!.orders.length, 1);
     });
   });
 });
