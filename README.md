@@ -1,6 +1,6 @@
 # Telegram order manager
 
-A single-shop React Telegram Mini App with a Node/Fastify API, PostgreSQL inventory commitments, manual payment review, and combined delivery or in-person handover.
+A single-shop React Telegram Mini App with a Node/Fastify API, PostgreSQL inventory commitments, manual payment review, and automatic fulfillment packages with a seller-chosen delivery or in-person handover.
 
 ## Local setup
 
@@ -42,6 +42,8 @@ The service fails startup for invalid or missing required configuration. It appl
 
 Create a bot in BotFather and configure its Main Mini App or menu button to open your HTTPS app URL. The web app sends Telegram's signed `initData` to the backend; the backend validates the signature, user, and one-hour launch freshness before creating a 24-hour session. Sessions remain in browser memory, not URLs or local storage. Reopen the Mini App when authentication expires.
 
+The interface language follows the Telegram client's language for the launching user, read before the first render and never stored. `ru` and its regional variants, `uk`, `be`, `kk`, `ky`, `uz`, and `tg` present Russian; every other value, and a missing value, present English. There is no language selector and no saved preference: changing the Telegram client language changes the interface on the next launch. Amounts and dates are formatted for the presented language, and the document language follows it.
+
 Configure your wife's numeric Telegram ID in `SELLER_IDS`. Usernames and display names do not grant permissions. There is no need for a conversational bot, automatic channel posting, or payment/carrier integration.
 
 Real Telegram verification requires a real BotFather token, an HTTPS URL reachable from the Telegram client, and access to that client. Locally generated signed fixtures exercise server cryptography and browser flows but do not prove those external prerequisites. Replace any ignored local verification credentials before connecting a real bot.
@@ -57,7 +59,7 @@ Products accept 1–20 images. Supported uploads are single-frame JPEG, PNG, and
 
 ## Customer orders and payment
 
-Browse products, choose quantities, and add to cart. **A cart does not reserve stock.** In the cart, choose a new delivery/handover group or explicitly combine with an existing open group, then **Review current prices → Accept prices & reserve order**.
+Browse products, choose quantities, and add to cart. **A cart does not reserve stock.** In the cart, **Review current prices → Accept prices & reserve order**. The order joins your current package automatically; the seller chooses delivery or in-person handover when shipping.
 
 Confirmation holds every requested item together or rejects the whole selection. Two customers cannot acquire the same final unit. A repeated submission reuses its order rather than purchasing twice. Conflicts retain the customer's selection and explain what changed.
 
@@ -71,25 +73,23 @@ Evidence submitted in time keeps items reserved **until the seller reviews them*
 
 ## Changes after payment submission
 
-Direct editing stops after evidence is submitted. Before packing, use **Request an item change** to propose additions, removal, or replacement. A request does not reserve replacement stock or change accepted items. It blocks packing until approved, rejected, or withdrawn.
+Direct editing stops after evidence is submitted. Before shipment, use **Request an item change** to propose additions, removal, or replacement. A request does not reserve replacement stock or change accepted items. It blocks shipping until approved, rejected, or withdrawn.
 
 In **Manage → Requests**, compare the old selection, requested selection, current prices, and availability. For a nonzero difference, settle the additional payment or refund externally and enter the settlement note before approval. The app records the decision; it does not move money.
 
 Approval checks stock again and applies the correction atomically. Prior revisions, original screenshots, and payment decisions remain visible. Unavailable replacements or unaccepted price changes leave the original purchase unchanged. Full removal records the external refund and a zero-item current revision rather than deleting history.
 
-For another purchase, normally create a separate order and select the existing open group. Each order keeps its own reference and payment evidence, while the seller can pack them together.
+For another purchase, create a separate order; it joins the same open package automatically. Each order keeps its own reference and payment evidence, while the seller can ship them together.
 
 ## Delivery or in-person handover
 
-Every group has exactly one method for **all** included orders: delivery or in-person handover. Customers can change the method while the group is open. In-person handover has no active delivery code.
+Your paid orders form one open package per customer automatically — there is no group to create or choose. A new order joins the current package until the seller ships it; the next order after shipment starts a new package. Each order keeps its own reference and payment.
 
-For delivery, the customer creates the shipment request with the delivery service outside this app, then can enter or replace its optional code in the group's details. Missing codes do not affect payment status. Switching to in-person clears the code; switching back requires re-entry.
+An open package carries one optional shared delivery code. Either the customer or the seller may set or replace it while the package is open; it is consumed by the shipment, so the next package starts without one. Missing codes do not affect payment status.
 
-In **Manage → Fulfillment**, the paid packing list combines paid purchases but lists unpaid/review-held orders separately. **Start paid-only packing** keeps paid orders together and moves remaining nonpaid orders to a new open group without duplicating the delivery code. It does not cancel their holds.
+In **Manage → Shipments**, the paid shipment contents combine paid purchases while unpaid and review-held orders are listed separately. **Ship all paid** completes the shipment in one action, records the seller's chosen method, and moves remaining nonpaid orders to a new open package without cancelling their holds. Pending item-change requests block shipping.
 
-Packing freezes customer changes. The seller can **Reopen for changes** before accepting additions or corrections, then check the revised packing list again. Pending item-change requests prevent packing and completion.
-
-Complete delivery with **Mark whole group sent**, or pickup with **Mark whole group handed over**. Delivery without a code requires explicit confirmation of the warning; handover never asks for a code. Completion does not charge customers or decrease stock again. Completed groups are read-only; subsequent purchases use an open or new group.
+Shipping as delivery records the delivery code; without one, the seller confirms a warning. Shipping as in-person handover never asks for a code and discards any stored one. Shipping does not charge customers or decrease stock again. Shipped packages are read-only history; later purchases start a new package.
 
 ## Verification
 

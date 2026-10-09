@@ -6,6 +6,7 @@ interface NativeBackButton {
 }
 interface TelegramWebApp {
   initData: string; colorScheme: 'light' | 'dark'; themeParams: Record<string, string>;
+  initDataUnsafe?: { user?: { language_code?: string } };
   isActive?: boolean; viewportStableHeight?: number;
   safeAreaInset?: { top: number; bottom: number; left: number; right: number };
   contentSafeAreaInset?: { top: number; bottom: number; left: number; right: number };
