@@ -11,6 +11,7 @@ import stat
 import time
 import uuid
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,14 @@ MAX_PIXELS = 25_000_000
 MAX_DIMENSION = 8192
 MAX_FIELD_SIZE = 1024 * 1024
 CHUNK = 256 * 1024
+
+# Bound concurrent image decodes: a 25-megapixel image costs ~100 MiB while
+# decoding, so unbounded uploads could exhaust a small host.
+_DECODE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="image-decode")
+
+
+async def _decode(data: bytes) -> DecodedImage:
+    return await asyncio.get_running_loop().run_in_executor(_DECODE_POOL, decode_image, data)
 
 STORAGE_KEY = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpeg|png|webp)$")
 IMAGE_FORMATS = {
@@ -124,7 +133,7 @@ async def validate_stored_product_image(media: Any, config: Settings) -> None:
         data = await asyncio.to_thread(_read_fd, fd)
     except OSError:
         raise ApiError(400, "invalid_image", "A selected product image is missing or invalid. Upload it again.") from None
-    image = await asyncio.to_thread(decode_image, data)
+    image = await _decode(data)
     if image.mime != media["mime"]:
         raise ApiError(400, "invalid_image", "A selected product image is missing or invalid. Upload it again.")
 
@@ -300,7 +309,7 @@ def register_media(app: FastAPI, pool: asyncpg.Pool, config: Settings) -> None:
     @app.post("/api/media")
     async def upload(request: Request, user: User = Depends(authenticate)) -> dict[str, str]:
         kind, data = await _read_upload(request, user)
-        image = await asyncio.to_thread(decode_image, data)
+        image = await _decode(data)
         media_id = uuid.uuid4()
         storage_key = f"{media_id}.{image.extension}"
         path = media_path(config, storage_key)
@@ -349,6 +358,22 @@ def register_media(app: FastAPI, pool: asyncpg.Pool, config: Settings) -> None:
         return await _send_image(media, config)
 
 
+def _scan_media(directory: Path) -> list[tuple[str, float]]:
+    """Read names and mtimes in one directory pass, without following symlinks."""
+    files: list[tuple[str, float]] = []
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            if not STORAGE_KEY.fullmatch(entry.name):
+                continue
+            try:
+                info = entry.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                files.append((entry.name, info.st_mtime))
+    return sorted(files)
+
+
 @dataclass(slots=True)
 class _Sweep:
     running: bool = False
@@ -391,29 +416,31 @@ async def cleanup_media(pool: asyncpg.Pool, config: Settings) -> None:
 
         # Walk the directory with a persistent cursor so old orphans are reached
         # even when the first names are recent or still referenced.
-        names = await asyncio.to_thread(
-            lambda: sorted(
-                entry.name
-                for entry in os.scandir(config.media_dir)
-                if entry.is_file(follow_symlinks=False) and STORAGE_KEY.fullmatch(entry.name)
-            )
-        )
-        if not names:
+        files = await asyncio.to_thread(_scan_media, config.media_dir)
+        if not files:
             sweep.cursor = 0
             return
+        names = [name for name, _ in files]
         cursor = sweep.cursor % len(names)
         now = time.time()
-        for name in names[cursor : cursor + 100]:
-            path = config.media_dir / name
-            try:
-                info = await asyncio.to_thread(os.stat, path, follow_symlinks=False)
-            except FileNotFoundError:
-                continue
-            if now - info.st_mtime <= 24 * 60 * 60:
-                continue
-            if await pool.fetchval("SELECT 1 FROM media WHERE storage_key=$1", name):
-                continue
-            await asyncio.to_thread(path.unlink, missing_ok=True)
+        old = [
+            name
+            for name, modified in files[cursor : cursor + 100]
+            if now - modified > 24 * 60 * 60
+        ]
+        if old:
+            # One query instead of one per file: referenced files are common.
+            known = {
+                row["storage_key"]
+                for row in await pool.fetch(
+                    "SELECT storage_key FROM media WHERE storage_key=ANY($1::text[])", old
+                )
+            }
+            for name in old:
+                if name not in known:
+                    await asyncio.to_thread(
+                        (config.media_dir / name).unlink, missing_ok=True
+                    )
         sweep.cursor = (cursor + 100) % len(names)
     finally:
         sweep.running = False

@@ -29,7 +29,7 @@ async def _housekeeping(pool, config: Settings) -> None:
 
 async def run() -> None:
     config = Settings()
-    pool = await create_pool(config.database_url)
+    pool = await create_pool(config.database_url, max_size=config.db_pool_max)
     try:
         await migrate(pool)
         await expire_orders(pool)

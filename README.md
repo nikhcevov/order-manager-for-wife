@@ -35,6 +35,7 @@ The API decodes uploaded images with Pillow instead of trusting extensions or MI
 | `PUBLIC_ORIGIN` | HTTPS frontend origin; HTTP localhost is permitted for local development |
 | `MEDIA_DIR` | Persistent image directory; the template path is relative to the API workspace |
 | `HOLD_MINUTES` | Unpaid hold duration; proposed default 30 minutes, maximum 1440 |
+| `DB_POOL_MAX` | PostgreSQL pool ceiling, default 10; lower it to save database memory |
 | `HOST`, `PORT` | API listen address and port |
 
 The service fails startup for invalid or missing required configuration. It applies pending versioned SQL migrations before accepting orders. PostgreSQL data persists in the Compose volume; media must also remain on persistent storage.
@@ -243,11 +244,12 @@ The app publishes **only `127.0.0.1:4893`** on the Unraid host. Caddy running on
 
 ```caddyfile
 shop.your-domain.com {
+    encode zstd gzip
     reverse_proxy 127.0.0.1:4893
 }
 ```
 
-TLS terminates at Caddy. Set `PUBLIC_ORIGIN` and the bot's Mini App/menu-button URL to that same public HTTPS origin. PostgreSQL has no published host port; the app reaches it as `db:5432` on the Compose network.
+TLS terminates at Caddy. Compression covers the built JavaScript, CSS, HTML, and JSON. The app marks hashed assets and published product images as immutable for a year, keeps the SPA shell revalidated, and leaves API responses `no-store`. Set `PUBLIC_ORIGIN` and the bot's Mini App/menu-button URL to that same public HTTPS origin. PostgreSQL has no published host port; the app reaches it as `db:5432` on the Compose network.
 
 From the project directory on Unraid:
 

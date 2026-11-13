@@ -38,6 +38,7 @@ async def test_product_upload_requires_a_seller_and_stays_private_until_publishe
     seller_view = await env.client.get(f"/api/media/{media_id}", headers=bearer(seller))
     assert seller_view.status_code == 200
     assert seller_view.headers["content-type"] == "image/png"
+    assert seller_view.headers["cache-control"] == "no-store"
     assert seller_view.headers["content-security-policy"] == "default-src 'none'"
     assert seller_view.content == path.read_bytes()
 
@@ -52,7 +53,9 @@ async def test_product_upload_requires_a_seller_and_stays_private_until_publishe
         product_id,
         UUID(media_id),
     )
-    assert (await env.client.get(f"/api/public-media/{media_id}")).status_code == 200
+    public_view = await env.client.get(f"/api/public-media/{media_id}")
+    assert public_view.status_code == 200
+    assert public_view.headers["cache-control"] == "public, max-age=31536000, immutable"
     assert (await env.client.get(f"/api/media/{media_id}", headers=bearer(alice))).status_code == 200
 
 

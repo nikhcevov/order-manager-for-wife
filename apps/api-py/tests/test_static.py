@@ -22,6 +22,7 @@ async def test_built_frontend_is_served_with_spa_fallback(env: Env) -> None:
     assert page.headers["content-type"].startswith("text/html")
     assert 'id="root"' in page.text
     assert page.headers["x-content-type-options"] == "nosniff"
+    assert page.headers["cache-control"] == "no-cache"
 
     assets = re.findall(r'(?:src|href)="(/assets/[^"]+)"', index)
     assert any(asset.endswith(".js") for asset in assets)
@@ -29,10 +30,16 @@ async def test_built_frontend_is_served_with_spa_fallback(env: Env) -> None:
         response = await env.client.get(asset)
         assert response.status_code == 200, asset
         assert response.content
+        assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
 
     deep_link = await env.client.get("/seller/orders")
     assert deep_link.status_code == 200
     assert 'id="root"' in deep_link.text
+    assert deep_link.headers["cache-control"] == "no-cache"
+
+    missing_asset = await env.client.get("/assets/missing-file.js")
+    assert missing_asset.status_code == 404
+    assert missing_asset.headers["cache-control"] == "no-cache"
 
     alice = await session(env, ALICE)
     missing = await env.client.get("/api/nope", headers=bearer(alice))

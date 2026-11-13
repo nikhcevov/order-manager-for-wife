@@ -111,9 +111,18 @@ def create_app(
         response = await call_next(request)
         if response.headers.get("content-type") == "application/json":
             response.headers["content-type"] = "application/json; charset=utf-8"
+        path = request.url.path
+        if response.status_code == 200 and (
+            path.startswith("/assets/") or path.startswith("/api/public-media/")
+        ):
+            # Content-addressed files: safe to keep forever.
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif not path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-cache"
+        else:
+            response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.get("/api/health")
@@ -146,6 +155,9 @@ def create_app(
             candidate = (root / path).resolve()
             if path and candidate.is_file() and candidate.is_relative_to(root):
                 return FileResponse(candidate)
+            if path.startswith("assets/"):
+                # Never return the HTML shell for a missing hashed asset.
+                raise StarletteHTTPException(status_code=404)
             return FileResponse(index, media_type="text/html")
 
     return app

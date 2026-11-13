@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     public_origin: str
     media_dir: Path
     hold_minutes: int = Field(default=30, ge=1, le=1440)
+    db_pool_max: int = Field(default=10, ge=1, le=50)
     port: int = Field(default=3000, ge=1, le=65535)
     host: str = "127.0.0.1"
 
