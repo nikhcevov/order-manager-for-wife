@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse, Response
 from .auth import register_auth
 from .config import Settings
 from .http import ApiError
+from .media import register_media
 
 logger = logging.getLogger("shop")
 
@@ -38,13 +39,12 @@ def create_app(pool: asyncpg.Pool, config: Settings) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def _invalid_input(_request: Request, error: RequestValidationError) -> JSONResponse:
-        details = [
-            {
-                "field": ".".join(str(part) for part in issue["loc"] if part != "body"),
-                "message": issue["msg"],
-            }
-            for issue in error.errors()
-        ]
+        details = []
+        for issue in error.errors():
+            parts = [str(part) for part in issue["loc"]]
+            if parts and parts[0] in {"body", "path", "query"}:
+                parts = parts[1:]
+            details.append({"field": ".".join(parts), "message": issue["msg"]})
         return JSONResponse(
             status_code=400,
             content={"error": "invalid_input", "message": "Check the submitted fields.", "details": details},
@@ -111,4 +111,5 @@ def create_app(pool: asyncpg.Pool, config: Settings) -> FastAPI:
         return {"ok": True}
 
     register_auth(app, pool, config)
+    register_media(app, pool, config)
     return app

@@ -28,6 +28,12 @@ ALICE = {"id": 2001, "first_name": "Alice", "username": "alice"}
 BOB = {"id": 2002, "first_name": "Bob", "username": "bob"}
 
 
+async def session(env: "Env", user: dict[str, object] = ALICE) -> str:
+    response = await env.client.post("/api/session", json={"initData": signed_init_data(user)})
+    assert response.status_code == 200, response.text
+    return response.json()["token"]
+
+
 def signed_init_data(
     user: dict[str, object] = ALICE,
     *,
