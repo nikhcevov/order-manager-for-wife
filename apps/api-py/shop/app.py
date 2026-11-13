@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse, Response
 
 from .auth import register_auth
+from .catalog import register_catalog
 from .config import Settings
 from .http import ApiError
 from .media import register_media
@@ -112,4 +113,5 @@ def create_app(pool: asyncpg.Pool, config: Settings) -> FastAPI:
 
     register_auth(app, pool, config)
     register_media(app, pool, config)
+    register_catalog(app, pool, config)
     return app
