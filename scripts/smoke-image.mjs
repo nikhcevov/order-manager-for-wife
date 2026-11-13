@@ -96,7 +96,7 @@ try {
     const response = await fetch(`http://127.0.0.1:4893${asset}`, { signal: AbortSignal.timeout(5_000) });
     if (!response.ok || (await response.arrayBuffer()).byteLength === 0) throw new Error('Built frontend asset could not be loaded');
   }
-  const uid = docker(['exec', name, 'node', '-e', "if(process.getuid()!==1000)process.exit(1);require('node:fs').writeFileSync('/app/var/media/smoke-write','synthetic-media');console.log(process.getuid())"]);
+  const uid = docker(['exec', name, 'python', '-c', "import os; assert os.getuid()==1000; open('/app/var/media/smoke-write','w').write('synthetic-media'); print(os.getuid())"]);
   if (uid !== '1000') throw new Error('Candidate must execute as UID 1000');
   const migrations = await admin.query(`SELECT count(*)::integer AS count FROM "${schema}".schema_migrations`);
   if (migrations.rows[0].count === 0) throw new Error('Actual entrypoint did not apply database migrations');

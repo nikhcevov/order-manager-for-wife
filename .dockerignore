@@ -7,3 +7,7 @@ var
 .git
 .omp
 openspec
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache

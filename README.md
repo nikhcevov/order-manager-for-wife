@@ -1,25 +1,26 @@
 # Telegram order manager
 
-A single-shop React Telegram Mini App with a Node/Fastify API, PostgreSQL inventory commitments, manual payment review, and automatic fulfillment packages with a seller-chosen delivery or in-person handover.
+A single-shop React Telegram Mini App with a Python/FastAPI API, PostgreSQL inventory commitments, manual payment review, and automatic fulfillment packages with a seller-chosen delivery or in-person handover.
 
 ## Local setup
 
-Requires Node.js 24+, npm, Docker Compose, and a Telegram bot for real Mini App use.
+Requires Python 3.13+, uv, Node.js 24+ (frontend build only), Docker Compose, and a Telegram bot for real Mini App use.
 
 1. Copy `.env.example` to `.env` and supply your own values. `.env` is ignored by Git and excluded from container builds.
 2. Set a local PostgreSQL password and the matching `DATABASE_URL`, your BotFather token, numeric `SELLER_IDS`, three-letter shop currency, manual payment instructions, and public origin.
 3. Install and start:
 
 ```sh
-SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm ci
+npm ci
 docker compose up -d --wait db
-npm run migrate
-npm run dev
+cd apps/api-py
+uv sync
+uv run python -m shop.server
 ```
 
-Vite serves `http://localhost:5173` and proxies `/api` to the Node service on port 3000. `GET /api/health` returns `{ "ok": true }`. Development requires valid runtime configuration too; there is no password, username-based admin grant, or development-login bypass. Opening outside Telegram displays launch instructions rather than a fake authenticated shop.
+The API applies pending migrations at startup. In another terminal, `npm run dev -w apps/web` serves the Mini App. Vite serves `http://localhost:5173` and proxies `/api` to the Python service on port 3000. The Node API under `apps/api` remains in the repository as a reference implementation while the Python port is verified; the production image runs Python only. `GET /api/health` returns `{ "ok": true }`. Development requires valid runtime configuration too; there is no password, username-based admin grant, or development-login bypass. Opening outside Telegram displays launch instructions rather than a fake authenticated shop.
 
-`SHARP_IGNORE_GLOBAL_LIBVIPS=1` selects the bundled image decoder on machines that already have libvips installed. The service decodes uploaded images instead of trusting extensions.
+The API decodes uploaded images with Pillow instead of trusting extensions or MIME labels: JPEG, PNG, and WebP only, with dimension, pixel, and frame limits.
 
 ## Runtime configuration
 
@@ -97,11 +98,15 @@ Use a separate test database. The behavior suite creates a private schema and te
 
 ```sh
 docker compose exec -T db createdb -U shop shop_test
-TEST_DATABASE_URL='postgresql://shop:your-local-password@127.0.0.1:55432/shop_test' npm test
+cd apps/api-py
+TEST_DATABASE_URL='postgresql://shop:your-local-password@127.0.0.1:55432/shop_test' uv run pytest -q
+cd ../..
 npm run typecheck
-npm run build
+npm run build -w apps/web
 npm audit
 ```
+
+The Python suite creates a private schema and temporary media directory per test. While both implementations coexist, the legacy Node suite can still be exercised with `TEST_DATABASE_URL=... npm test`.
 
 The PostgreSQL-backed suite covers authorization/media privacy, publication, stock contention, idempotency, expiry races, price-preserving edits, manual review, paid corrections, and fulfillment. Browser verification must additionally exercise the actual screens. Signed local fixtures are not a substitute for a real Telegram launch.
 
@@ -123,7 +128,7 @@ Root `package.json` is the single authoritative application version, initially `
 
 One fixed repository-specific concurrency group uses `queue: max` and `cancel-in-progress: false` to serialize delivery while retaining distinct pending releases. Immediately before publishing, an authenticated current-ref check skips deleted or superseded refs; lookup/authentication errors fail closed. GitHub's queue is finite, and a canceled run can be rerun if its ref remains current. A newer push after that check remains undelivered until it passes verification. Deleted Git tags do not delete published images.
 
-CI uses Node 24 and isolated PostgreSQL 18, runs `npm ci`, `npm run typecheck`, and `npm test` (the PostgreSQL-backed suite in `apps/api/test` and release-policy regressions in `scripts/test`), then builds the existing Dockerfile and smokes its actual entrypoint. Smoke checks bounded API health and built frontend startup on port 4893, migrations, UID 1000, and exclusion of canary runtime secrets/data from image files and layers. Only afterward does CI authenticate and push the **same tested local image**, full-commit tag first and delivery aliases afterward, with no second build. Failed gates write nothing to the registry and create no release tag or GitHub Release; a later transfer failure can leave some verified references without completing all aliases.
+CI uses Node 24 for the Vite build and release tooling, Python 3.13 via uv for the API suite, and an isolated PostgreSQL 18. It runs `npm ci`, `npm run typecheck`, the legacy Node suite, the Python pytest suite in `apps/api-py`, then builds the Python Dockerfile and smokes its actual entrypoint. Smoke checks bounded API health and built frontend startup on port 4893, migrations, UID 1000, and exclusion of canary runtime secrets/data from image files and layers. Only afterward does CI authenticate and push the **same tested local image**, full-commit tag first and delivery aliases afterward, with no second build. Failed gates write nothing to the registry and create no release tag or GitHub Release; a later transfer failure can leave some verified references without completing all aliases.
 
 Only after the full-commit reference and **all** release delivery aliases have been pushed successfully, CI creates an annotated Git tag `vX.Y.Z` at the exact source commit and a GitHub Release with generated notes. The release body records the version image reference and first successful exact image digest. An existing release tag pointing at another commit fails before image publication; a matching tag and existing release are retry-safe and are not duplicated or rewritten, preserving their generated notes and recorded digest. Tags created with `GITHUB_TOKEN` do not trigger another workflow run: the main run performs all image, tag, and release work.
 
@@ -143,7 +148,7 @@ Push that release commit through the normal main workflow. The initial `0.2.0` v
 
 To retry publication, rerun the existing Actions run or use Actions **Run workflow**, selecting current `main` or a matching stable `vX.Y.Z` ref. Manual runs use the same version checks, verification gates, and authenticated current-ref eligibility as pushes. Pushing an already-present unchanged Git tag alone creates no event.
 
-For a reproducible local CI-style smoke on Linux with Docker and Node 24, use an isolated database, not `.env` or the shop database. Ensure port 4893 is free. The helper supplies synthetic bot/seller settings and temporary writable media, uses host networking, and cleans up its container/media:
+For a reproducible local CI-style smoke on Linux with Docker, uv, and Node 24, use an isolated database, not `.env` or the shop database. Ensure port 4893 is free. The helper supplies synthetic bot/seller settings and temporary writable media, uses host networking, and cleans up its container/media:
 
 ```sh
 (
@@ -168,9 +173,10 @@ For a reproducible local CI-style smoke on Linux with Docker and Node 24, use an
   done
   [ "$ready" = true ]
   export TEST_DATABASE_URL='postgresql://shop:ci-only-password@127.0.0.1:55433/shop_test'
-  SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm ci
+  npm ci
   npm run typecheck
-  npm test
+  (cd apps/api-py && uv sync --frozen && uv run pytest -q)
+  node --test scripts/test/*.test.mjs
   docker build --platform linux/amd64 \
     --label org.opencontainers.image.source=https://github.com/nikhcevov/order-manager-for-wife \
     --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
@@ -200,7 +206,7 @@ Docker stores login credentials in its credential configuration; use a credentia
 
 ## Production deployment
 
-`npm run build` builds both workspaces; `npm start` runs the compiled API, applies migrations, and serves the built React app from the same origin. Put an HTTPS reverse proxy in front of it and set `PUBLIC_ORIGIN` accordingly. When exposing the Node service in a container, set `HOST=0.0.0.0`.
+The production image builds the React app with Vite and runs the Python API, which applies migrations and serves the built app from the same origin. Put an HTTPS reverse proxy in front of it and set `PUBLIC_ORIGIN` accordingly. When exposing the service in a container, set `HOST=0.0.0.0`. For a local production-style run, build the frontend with `npm run build -w apps/web` and start `uv run python -m shop.server` from `apps/api-py`.
 
 ### Unraid / production Compose
 
@@ -211,7 +217,6 @@ Both services load their container settings from `.env` beside the Compose file.
 ```dotenv
 APP_IMAGE=ghcr.io/nikhcevov/order-manager-for-wife:latest
 APP_DATA_DIR=/mnt/cache/appdata/order-manager
-NODE_ENV=production
 HOST=0.0.0.0
 PORT=4893
 MEDIA_DIR=/app/var/media

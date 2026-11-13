@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import asyncpg
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.responses import JSONResponse, Response
+from starlette.responses import FileResponse, JSONResponse, Response
 
 from .auth import register_auth
 from .catalog import register_catalog
@@ -23,6 +24,7 @@ logger = logging.getLogger("shop")
 
 MAX_JSON_BODY = 1024 * 1024
 CONFLICT_CODES = {"23505", "23503", "23514"}
+WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 
 
 def error_response(error: ApiError) -> JSONResponse:
@@ -32,7 +34,9 @@ def error_response(error: ApiError) -> JSONResponse:
     return JSONResponse(status_code=error.status_code, content=body)
 
 
-def create_app(pool: asyncpg.Pool, config: Settings) -> FastAPI:
+def create_app(
+    pool: asyncpg.Pool, config: Settings, web_dir: Path | None = None
+) -> FastAPI:
     app = FastAPI(title="Telegram order manager", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.pool = pool
     app.state.config = config
@@ -119,4 +123,19 @@ def create_app(pool: asyncpg.Pool, config: Settings) -> FastAPI:
     register_catalog(app, pool, config)
     register_orders(app, pool, config)
     register_fulfillment(app, pool, config)
+
+    root = (WEB_DIST if web_dir is None else web_dir).resolve()
+    index = root / "index.html"
+    if index.is_file():
+        # Registered last: every /api route above wins. Non-API paths serve a
+        # real file when present and otherwise the SPA shell, like the Node app.
+        @app.get("/{path:path}")
+        async def single_page(path: str) -> Response:
+            if path == "api" or path.startswith("api/"):
+                raise StarletteHTTPException(status_code=404)
+            candidate = (root / path).resolve()
+            if path and candidate.is_file() and candidate.is_relative_to(root):
+                return FileResponse(candidate)
+            return FileResponse(index, media_type="text/html")
+
     return app

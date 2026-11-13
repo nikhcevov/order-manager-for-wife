@@ -63,6 +63,15 @@ jobs:
       - name: Run PostgreSQL-backed behavior suite
         if: steps.resolve.outputs.eligible == 'true'
         run: npm test
+      - name: Install uv
+        if: steps.resolve.outputs.eligible == 'true'
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Run Python behavior suite
+        if: steps.resolve.outputs.eligible == 'true'
+        working-directory: apps/api-py
+        run: uv sync --frozen && uv run pytest -q
       - name: Build the single production candidate
         if: steps.resolve.outputs.eligible == 'true'
         env:
