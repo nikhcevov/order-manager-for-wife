@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse, Response
 from .auth import register_auth
 from .catalog import register_catalog
 from .config import Settings
+from .fulfillment import register_fulfillment
 from .http import ApiError
 from .media import register_media
 from .orders import register_orders
@@ -117,4 +118,5 @@ def create_app(pool: asyncpg.Pool, config: Settings) -> FastAPI:
     register_media(app, pool, config)
     register_catalog(app, pool, config)
     register_orders(app, pool, config)
+    register_fulfillment(app, pool, config)
     return app

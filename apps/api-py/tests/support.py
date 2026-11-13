@@ -172,3 +172,63 @@ async def resolve(
         headers=bearer(token),
         json=payload,
     )
+
+UNSET = object()
+
+
+def quantities(lines: list[dict[str, Any]]) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for line in lines:
+        result[line["product_id"]] = result.get(line["product_id"], 0) + line["quantity"]
+    return result
+
+
+async def group_of(env: Env, token: str, group_id: str) -> dict[str, Any]:
+    response = await env.client.get(f"/api/groups/{group_id}", headers=bearer(token))
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+async def patch_group(
+    env: Env,
+    token: str,
+    group: dict[str, Any],
+    delivery_code: Any = UNSET,
+):
+    payload: dict[str, Any] = {"version": group["version"]}
+    if delivery_code is not UNSET:
+        payload["deliveryCode"] = delivery_code
+    return await env.client.patch(
+        f"/api/groups/{group['id']}", headers=bearer(token), json=payload
+    )
+
+
+async def ship(
+    env: Env,
+    token: str,
+    group: dict[str, Any],
+    method: str = "delivery",
+    delivery_code: Any = UNSET,
+    allow_missing: bool | None = None,
+):
+    payload: dict[str, Any] = {"version": group["version"], "method": method}
+    if delivery_code is not UNSET:
+        payload["deliveryCode"] = delivery_code
+    if allow_missing is not None:
+        payload["allowMissingCode"] = allow_missing
+    return await env.client.post(
+        f"/api/seller/groups/{group['id']}/ship", headers=bearer(token), json=payload
+    )
+
+async def confirm(
+    env: Env,
+    customer: str,
+    seller_token: str,
+    order: dict[str, Any],
+    media_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    reviewed = await review(env, customer, order, media_ids)
+    assert reviewed.status_code == 200, reviewed.text
+    paid = await pay(env, seller_token, reviewed.json())
+    assert paid.status_code == 200, paid.text
+    return paid.json()
