@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from shop.app import WEB_DIST
 
 from .helpers import ALICE, Env, session
 from .uploads import bearer
 
 INDEX = WEB_DIST / "index.html"
+pytestmark = pytest.mark.skipif(not INDEX.is_file(), reason="apps/web/dist is not built")
 
 
 async def test_built_frontend_is_served_with_spa_fallback(env: Env) -> None:

@@ -63,6 +63,9 @@ jobs:
       - name: Run PostgreSQL-backed behavior suite
         if: steps.resolve.outputs.eligible == 'true'
         run: npm test
+      - name: Build the frontend for static-serving tests
+        if: steps.resolve.outputs.eligible == 'true'
+        run: npm run build -w apps/web
       - name: Install uv
         if: steps.resolve.outputs.eligible == 'true'
         run: |
