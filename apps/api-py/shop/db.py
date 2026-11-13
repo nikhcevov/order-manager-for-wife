@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -15,8 +16,22 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "api" / "migrations"
 MIGRATION_NAME = re.compile(r"^\d+.*\.sql$")
 
 
-async def create_pool(database_url: str) -> asyncpg.Pool:
-    return await asyncpg.create_pool(database_url, min_size=1, max_size=15)
+async def init_connection(connection: asyncpg.Connection) -> None:
+    # pg returns parsed JSON; asyncpg returns strings unless we install codecs.
+    for name in ("json", "jsonb"):
+        await connection.set_type_codec(
+            name,
+            schema="pg_catalog",
+            encoder=json.dumps,
+            decoder=json.loads,
+        )
+
+
+async def create_pool(database_url: str, **options: object) -> asyncpg.Pool:
+    options.setdefault("min_size", 1)
+    options.setdefault("max_size", 15)
+    options.setdefault("init", init_connection)
+    return await asyncpg.create_pool(database_url, **options)
 
 
 @asynccontextmanager

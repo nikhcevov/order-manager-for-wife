@@ -6,6 +6,7 @@ import logging
 
 import asyncpg
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse, Response
@@ -15,6 +16,7 @@ from .catalog import register_catalog
 from .config import Settings
 from .http import ApiError
 from .media import register_media
+from .orders import register_orders
 
 logger = logging.getLogger("shop")
 
@@ -25,7 +27,7 @@ CONFLICT_CODES = {"23505", "23503", "23514"}
 def error_response(error: ApiError) -> JSONResponse:
     body: dict[str, object] = {"error": error.code, "message": error.message}
     if error.details is not None:
-        body["details"] = error.details
+        body["details"] = jsonable_encoder(error.details)
     return JSONResponse(status_code=error.status_code, content=body)
 
 
@@ -114,4 +116,5 @@ def create_app(pool: asyncpg.Pool, config: Settings) -> FastAPI:
     register_auth(app, pool, config)
     register_media(app, pool, config)
     register_catalog(app, pool, config)
+    register_orders(app, pool, config)
     return app

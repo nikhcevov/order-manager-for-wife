@@ -13,7 +13,7 @@ import pytest
 
 from shop.app import create_app
 from shop.config import Settings
-from shop.db import migrate
+from shop.db import create_pool, migrate
 
 from .helpers import BOT_TOKEN, Env
 
@@ -26,7 +26,7 @@ async def env(tmp_path: Path) -> AsyncIterator[Env]:
     admin = await asyncpg.connect(url)
     schema = f"test_{secrets.token_hex(8)}"
     await admin.execute(f'CREATE SCHEMA "{schema}"')
-    pool = await asyncpg.create_pool(url, min_size=1, max_size=4, server_settings={"search_path": schema})
+    pool = await create_pool(url, max_size=4, server_settings={"search_path": schema})
     try:
         await migrate(pool)
         config = Settings(

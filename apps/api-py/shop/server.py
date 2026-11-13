@@ -12,6 +12,7 @@ from .app import create_app
 from .config import Settings
 from .db import create_pool, migrate
 from .media import cleanup_media
+from .orders import expire_orders
 
 logger = logging.getLogger("shop")
 
@@ -19,6 +20,7 @@ logger = logging.getLogger("shop")
 async def _housekeeping(pool, config: Settings) -> None:
     while True:
         try:
+            await expire_orders(pool)
             await cleanup_media(pool, config)
         except Exception:
             logger.exception("Housekeeping failed")
@@ -30,6 +32,7 @@ async def run() -> None:
     pool = await create_pool(config.database_url)
     try:
         await migrate(pool)
+        await expire_orders(pool)
         await cleanup_media(pool, config)
         app = create_app(pool, config)
         server = uvicorn.Server(
