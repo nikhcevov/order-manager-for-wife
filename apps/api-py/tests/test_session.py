@@ -6,20 +6,27 @@ import hashlib
 import time
 from urllib.parse import urlencode
 
-from .helpers import ALICE, SELLER, Env, signed_init_data
+from .helpers import ALICE, SELLER, Env, session, signed_init_data
+from .uploads import bearer
 
 
 async def test_health_is_public_and_hardened(env: Env) -> None:
     response = await env.client.get("/api/health")
     assert response.status_code == 200
     assert response.json() == {"ok": True}
+    assert response.headers["content-type"] == "application/json; charset=utf-8"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["referrer-policy"] == "no-referrer"
     assert response.headers["cache-control"] == "no-store"
 
 
-async def test_unknown_api_route_returns_the_json_error_contract(env: Env) -> None:
-    response = await env.client.get("/api/nope")
+async def test_unknown_api_route_authenticates_first(env: Env) -> None:
+    anonymous = await env.client.get("/api/nope")
+    assert anonymous.status_code == 401
+    assert anonymous.json()["error"] == "unauthorized"
+
+    alice = await session(env, ALICE)
+    response = await env.client.get("/api/nope", headers=bearer(alice))
     assert response.status_code == 404
     assert response.json() == {"error": "not_found", "message": "Endpoint not found"}
 

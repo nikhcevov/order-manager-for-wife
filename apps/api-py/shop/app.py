@@ -6,17 +6,17 @@ import logging
 from pathlib import Path
 
 import asyncpg
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import FileResponse, JSONResponse, Response
 
-from .auth import register_auth
+from .auth import authenticate, register_auth
 from .catalog import register_catalog
 from .config import Settings
 from .fulfillment import register_fulfillment
-from .http import ApiError
+from .http import ApiError, User
 from .media import register_media
 from .orders import register_orders
 
@@ -109,6 +109,8 @@ def create_app(
                     content={"error": "invalid_request", "message": "Invalid or oversized request."},
                 )
         response = await call_next(request)
+        if response.headers.get("content-type") == "application/json":
+            response.headers["content-type"] = "application/json; charset=utf-8"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
@@ -123,6 +125,14 @@ def create_app(
     register_catalog(app, pool, config)
     register_orders(app, pool, config)
     register_fulfillment(app, pool, config)
+
+    @app.api_route(
+        "/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"]
+    )
+    async def unknown_api(path: str, user: User = Depends(authenticate)) -> Response:
+        # A known route above always wins. For the rest, authenticate first:
+        # the Node service applies its bearer preHandler even to unknown /api paths.
+        raise StarletteHTTPException(status_code=404)
 
     root = (WEB_DIST if web_dir is None else web_dir).resolve()
     index = root / "index.html"
