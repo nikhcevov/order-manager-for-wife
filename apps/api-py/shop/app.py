@@ -1,0 +1,114 @@
+"""Application factory: error contract, security headers, routes."""
+
+from __future__ import annotations
+
+import logging
+
+import asyncpg
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse, Response
+
+from .auth import register_auth
+from .config import Settings
+from .http import ApiError
+
+logger = logging.getLogger("shop")
+
+MAX_JSON_BODY = 1024 * 1024
+CONFLICT_CODES = {"23505", "23503", "23514"}
+
+
+def error_response(error: ApiError) -> JSONResponse:
+    body: dict[str, object] = {"error": error.code, "message": error.message}
+    if error.details is not None:
+        body["details"] = error.details
+    return JSONResponse(status_code=error.status_code, content=body)
+
+
+def create_app(pool: asyncpg.Pool, config: Settings) -> FastAPI:
+    app = FastAPI(title="Telegram order manager", docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.pool = pool
+    app.state.config = config
+
+    @app.exception_handler(ApiError)
+    async def _api_error(_request: Request, error: ApiError) -> JSONResponse:
+        return error_response(error)
+
+    @app.exception_handler(RequestValidationError)
+    async def _invalid_input(_request: Request, error: RequestValidationError) -> JSONResponse:
+        details = [
+            {
+                "field": ".".join(str(part) for part in issue["loc"] if part != "body"),
+                "message": issue["msg"],
+            }
+            for issue in error.errors()
+        ]
+        return JSONResponse(
+            status_code=400,
+            content={"error": "invalid_input", "message": "Check the submitted fields.", "details": details},
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error(request: Request, error: StarletteHTTPException) -> JSONResponse:
+        if error.status_code == 404:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "not_found", "message": "Endpoint not found"},
+            )
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": "invalid_request", "message": "Invalid or oversized request."},
+        )
+
+    @app.exception_handler(asyncpg.IntegrityConstraintViolationError)
+    async def _conflict(_request: Request, error: asyncpg.PostgresError) -> JSONResponse:
+        if error.sqlstate in CONFLICT_CODES:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "conflict",
+                    "message": "This operation conflicts with current records. Refresh and try again.",
+                },
+            )
+        logger.exception("Database constraint failure")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "internal_error", "message": "The request could not be completed."},
+        )
+
+    @app.exception_handler(Exception)
+    async def _internal_error(_request: Request, error: Exception) -> JSONResponse:
+        logger.exception("Request failed")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "internal_error", "message": "The request could not be completed."},
+        )
+
+    @app.middleware("http")
+    async def headers_and_body_limit(request: Request, call_next) -> Response:
+        content_type = request.headers.get("content-type", "")
+        declared = request.headers.get("content-length")
+        if request.method in {"POST", "PATCH", "PUT"} and content_type.startswith("application/json") and declared:
+            try:
+                too_large = int(declared) > MAX_JSON_BODY
+            except ValueError:
+                too_large = True
+            if too_large:
+                return JSONResponse(
+                    status_code=413,
+                    content={"error": "invalid_request", "message": "Invalid or oversized request."},
+                )
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/api/health")
+    async def health() -> dict[str, bool]:
+        return {"ok": True}
+
+    register_auth(app, pool, config)
+    return app
